@@ -1,5 +1,17 @@
-| Supported Targets | ESP32-S2 | ESP32-S3 | ESP32-C3 |
-| ----------------- | -------- | -------- | -------- |
+# Repost Declaration
+
+I would like to declare that this EXAMPLE is a repost. 
+Source: https://esp32.com/viewtopic.php?f=25&t=35035&p=130550&hilit=uart_dma#p130550.
+
+# Technical Requirements:
+
+ESPIDF PLUGIN v1.4.0 (for Python 3.8)
+ESPIDF V5.4 (git checkout 2e68e510a5163c106ea04182b6ffe3063630b6c1)
+Not applicable to ESP32 and ESP32-S2 without GDMA
+
+# Suuported Targets:
+| ESP32-S2 | ESP32-S3 | ESP32-C3 |
+
 
 # UART DMA (UHCI) Example
 
