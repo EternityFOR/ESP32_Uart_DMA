@@ -1,0 +1,2793 @@
+From efdd7169e076173fa2e93bfcf88e74f55f7fb2e4 Mon Sep 17 00:00:00 2001
+From: Cao Sen Miao <caosenmiao@espressif.com>
+Date: Wed, 10 Nov 2021 20:24:57 +0800
+Subject: [PATCH] UHCI: Add new driver support
+
+---
+ components/driver/CMakeLists.txt              |  12 +-
+ components/driver/include/driver/uart.h       |  15 +
+ components/driver/include/driver/uhci.h       | 176 +++++
+ components/driver/uart.c                      |   7 +
+ components/driver/uhci.c                      | 608 ++++++++++++++++++
+ components/hal/CMakeLists.txt                 |   3 +
+ components/hal/esp32c3/include/hal/uhci_ll.h  |  75 ++-
+ .../hal/esp32h2/include/hal/uhci_types.h      |  54 --
+ components/hal/esp32s2/include/hal/uhci_ll.h  | 353 ++++++++++
+ components/hal/esp32s3/include/hal/uart_ll.h  |  20 +-
+ components/hal/esp32s3/include/hal/uhci_ll.h  |  85 +--
+ components/hal/include/hal/uart_hal.h         |  30 +-
+ components/hal/include/hal/uhci_hal.h         | 189 ++++++
+ components/hal/include/hal/uhci_types.h       | 120 ++--
+ components/hal/uart_hal.c                     |  23 +-
+ components/hal/uhci_hal.c                     |  98 +++
+ components/soc/esp32c3/CMakeLists.txt         |   1 +
+ .../soc/esp32c3/include/soc/uhci_caps.h       |  18 +
+ components/soc/esp32c3/uhci_periph.c          |  17 +
+ components/soc/esp32s2/CMakeLists.txt         |   1 +
+ .../soc/esp32s2/include/soc/uhci_caps.h       |  18 +
+ .../soc/esp32s2/include/soc/uhci_struct.h     |  20 +-
+ components/soc/esp32s2/uhci_periph.c          |  21 +
+ components/soc/esp32s3/CMakeLists.txt         |   1 +
+ .../soc/esp32s3/include/soc/uhci_caps.h       |  18 +
+ components/soc/esp32s3/uhci_periph.c          |  17 +
+ components/soc/include/soc/uhci_periph.h      |  26 +-
+ .../main/uhci_uart_demo.c                     |   2 +-
+ .../peripherals/uart/uart_dma/CMakeLists.txt  |   6 +
+ examples/peripherals/uart/uart_dma/README.md  |  61 ++
+ .../uart/uart_dma/main/CMakeLists.txt         |   6 +
+ .../uart/uart_dma/main/Kconfig.projbuild      |  35 +
+ .../uart/uart_dma/main/uart_dma_main.c        | 123 ++++
+ tools/ci/check_copyright_ignore.txt           |   8 -
+ 34 files changed, 2019 insertions(+), 248 deletions(-)
+ create mode 100644 components/driver/include/driver/uhci.h
+ create mode 100644 components/driver/uhci.c
+ delete mode 100644 components/hal/esp32h2/include/hal/uhci_types.h
+ create mode 100644 components/hal/esp32s2/include/hal/uhci_ll.h
+ create mode 100644 components/hal/include/hal/uhci_hal.h
+ create mode 100644 components/hal/uhci_hal.c
+ create mode 100644 components/soc/esp32c3/include/soc/uhci_caps.h
+ create mode 100644 components/soc/esp32c3/uhci_periph.c
+ create mode 100644 components/soc/esp32s2/include/soc/uhci_caps.h
+ create mode 100644 components/soc/esp32s2/uhci_periph.c
+ create mode 100644 components/soc/esp32s3/include/soc/uhci_caps.h
+ create mode 100644 components/soc/esp32s3/uhci_periph.c
+ create mode 100644 examples/peripherals/uart/uart_dma/CMakeLists.txt
+ create mode 100644 examples/peripherals/uart/uart_dma/README.md
+ create mode 100644 examples/peripherals/uart/uart_dma/main/CMakeLists.txt
+ create mode 100644 examples/peripherals/uart/uart_dma/main/Kconfig.projbuild
+ create mode 100644 examples/peripherals/uart/uart_dma/main/uart_dma_main.c
+
+diff --git a/components/driver/CMakeLists.txt b/components/driver/CMakeLists.txt
+index 60abe84f194..ed3dc745726 100644
+--- a/components/driver/CMakeLists.txt
++++ b/components/driver/CMakeLists.txt
+@@ -16,7 +16,8 @@ set(srcs
+     "spi_slave.c"
+     "spi_bus_lock.c"
+     "timer.c"
+-    "uart.c")
++    "uart.c"
++    )
+ 
+ set(includes "include" "${target}/include" "deprecated")
+ 
+@@ -52,7 +53,9 @@ if(IDF_TARGET STREQUAL "esp32s2")
+                      "esp32s2/touch_sensor.c"
+                      "esp32s2/adc.c"
+                      "esp32s2/adc2_init_cal.c"
+-                     "esp32s2/dac.c")
++                     "esp32s2/dac.c"
++                     "uhci.c"
++                     )
+ endif()
+ 
+ if(${target} STREQUAL "esp32s3")
+@@ -69,6 +72,7 @@ if(${target} STREQUAL "esp32s3")
+                      "touch_sensor_common.c"
+                      "esp32s3/touch_sensor.c"
+                      "i2s.c"
++                     "uhci.c"
+                      "twai.c")
+ endif()
+ 
+@@ -84,7 +88,9 @@ if(IDF_TARGET STREQUAL "esp32c3")
+                      "esp32c3/adc.c"
+                      "esp32c3/adc2_init_cal.c"
+                      "esp32c3/rtc_tempsensor.c"
+-                     "twai.c")
++                     "uhci.c"
++                     "twai.c"
++                     )
+ endif()
+ 
+ if(IDF_TARGET STREQUAL "esp32h2")
+diff --git a/components/driver/include/driver/uart.h b/components/driver/include/driver/uart.h
+index 76aa424fa27..9d745b859d0 100644
+--- a/components/driver/include/driver/uart.h
++++ b/components/driver/include/driver/uart.h
+@@ -867,6 +867,21 @@ esp_err_t uart_set_loop_back(uart_port_t uart_num, bool loop_back_en);
+   */
+ void uart_set_always_rx_timeout(uart_port_t uart_num, bool always_rx_timeout_en);
+ 
++/**
++  * @brief  Set the UART rx-idle threshold value.
++  *         when receiver takes more time than rx_idle_thrhd to receive a byte data,
++  *         it will produce frame end signal for uhci to stop receiving data.
++  *
++  * @param  uart_num UART number.
++  * @param  rx_idle_thr The rx-idle threshold to be set.
++  *
++  * @return
++  *      - ESP_OK on success
++  *      - ESP_ERR_INVALID_ARG Parameter error
++  *      - ESP_FAIL Driver not installed
++  */
++esp_err_t uart_set_rx_idle_thr(uart_port_t uart_num, uint32_t rx_idle_thr);
++
+ #ifdef __cplusplus
+ }
+ #endif
+diff --git a/components/driver/include/driver/uhci.h b/components/driver/include/driver/uhci.h
+new file mode 100644
+index 00000000000..4504d410da4
+--- /dev/null
++++ b/components/driver/include/driver/uhci.h
+@@ -0,0 +1,176 @@
++/*
++ * SPDX-FileCopyrightText: 2020-2021 Espressif Systems (Shanghai) CO LTD
++ *
++ * SPDX-License-Identifier: Apache-2.0
++ */
++
++#pragma once
++
++#include "esp_err.h"
++#include "freertos/FreeRTOS.h"
++#include "freertos/queue.h"
++#include "hal/uhci_types.h"
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++//Generate defalt DMA configuration
++#define UHCI_CONF_DEFAULT() {\
++    .tx_dma_cnt = 2,\
++    .rx_dma_cnt = 5,\
++    .rx_dma_buf_size = 128,\
++    .tx_dma_buf_size = 256,\
++}
++
++// UHCI RX event type
++typedef enum {
++    UHCI_EVENT_DATA     = 0x1,    /*!< UHCI data event*/
++    UHCI_EVENT_EOF      = 0x2,    /*!< UHCI end of fram event*/
++    UHCI_EVENT_ERR_EOF  = 0x4,    /*!< UHCI error eof event*/
++    UHCI_EVENT_BUF_FULL = 0x8,    /*!< UHCI buffer full event*/
++} uhci_event_type_t;
++
++// UHCI RX event typedef
++typedef struct {
++    uint32_t type;                   /*!< UHCI event type*/
++    size_t len;                      /*!< RX data size*/
++} uhci_event_t;
++
++// UHCI DMA buffer typedef
++typedef struct {
++    uint8_t rx_dma_cnt;          /*!< RX DMA descriptor count, suggested >=5*/
++    uint8_t tx_dma_cnt;          /*!< TX DMA descriptor count, suggested >=2*/
++    uint16_t rx_dma_buf_size;    /*!< RX DMA buffer size, suggested [128 ... 4095]*/
++    uint16_t tx_dma_buf_size;    /*!< TX DMA buffer size, suggested [128 ... 4095]*/
++} uhci_dma_config_t;
++
++
++/**
++ * @brief Install UHCI driver
++ *
++ * @param[in] uhci_num  UHCI number
++ * @param[in] config Pointer to the DMA buffer configuration structure
++ * @param[in] rx_rb_size Ringbuffer size used to store the received data
++ * @param[in] queue_cnt Event queue cnt
++ * @param[in] event_queue pointer to accept event queue
++ *
++ * @return
++ *         - ESP_OK success
++ *         - ESP_ERR_INVALID_ARG parameter error
++ *         - ESP_ERR_INVALID_STATE driver already installed
++ *         - ESP_ERR_NO_MEM out of memory
++ */
++esp_err_t uhci_driver_install(int uhci_num, uhci_dma_config_t *config, size_t rx_rb_size, int queue_cnt, QueueHandle_t *event_queue);
++
++/**
++ * @brief Read bytes from UHCI buffer
++ *
++ * @param uhci_num UHCI number
++ * @param pbuf Pointer to the buffer store the data
++ * @param read_size The length want to read
++ * @param ticks_to_wait timeout value
++ *
++ * @return Number of bytes read.
++ */
++size_t uhci_dma_read_bytes(int uhci_num, uint8_t *pbuf, size_t read_size, TickType_t ticks_to_wait);
++
++/**
++ * @brief Flush RX buffer.
++ *
++ * @param uhci_num UHCI number
++ *
++ * @return
++ *        - ESP_OK success
++ *        - ESP_ERR_INVALID_ARG parameter error
++ *        - ESP_ERR_INVALID_STATE driver not installed
++ */
++esp_err_t uhci_rx_dma_flush(int uhci_num);
++
++/**
++ * @brief Write bytes
++ *
++ * @param uhci_num UHCI number
++ * @param pbuf Pointer to the data needs to be send out
++ * @param write_size The write size
++ * @param eof_set Set to true
++ *
++ * @return Number of bytes written.
++ */
++size_t uhci_dma_write_bytes(int uhci_num, uint8_t *pbuf, size_t write_size, bool eof_set);
++
++/**
++ * @brief Attach a uart port for UHCI, then start rx DMA
++ *
++ * @param uhci_num UHCI number
++ * @param UART number need to be attached
++ *
++ * @return
++ *        - ESP_OK if succeed.
++ *        - ESP_ERR_INVALID_ARG parameter error
++ *        - ESP_ERR_INVALID_STATE driver not installed
++ */
++esp_err_t uhci_attach_uart_port_and_start(int uhci_num, int uart_num);
++
++/**
++ * @brief Set RX DMA eof mode
++ *
++ * @param uhci_num UHCI number
++ * @param eof_mode eof mode
++ *
++ * @return
++ *        - ESP_OK if succeed
++ *        - ESP_ERR_INVALID_ARG parameter error
++ */
++esp_err_t uhci_set_rx_eof_mode(int uhci_num, uint32_t eof_mode);
++
++/**
++ * @brief Configure UHCI tx encoder
++ *
++ * @param uhci_num UHCI number
++ * @param cfg Pointer to tx encoder configuration structure
++ *
++ * @return
++ *        - ESP_OK if succeed
++ *        - ESP_ERR_INVALID_ARG parameter error
++ */
++esp_err_t uhci_tx_packet_encode_cfg(int uhci_num, uhci_tx_enc_cfg_t *cfg);
++
++/**
++ * @brief Configure UHCI rx decoder
++ *
++ * @param uhci_num UHCI number
++ * @param cfg Pointer to rx decoder configuration structure
++ *
++ * @return
++ *        - ESP_OK if succeed
++ *        - ESP_ERR_INVALID_ARG parameter error
++ */
++esp_err_t uhci_rx_packet_decode_cfg(int uhci_num, uhci_rx_dec_cfg_t *cfg);
++
++/**
++ * @brief Configure UHCI to use separate char and header in the frame
++ *
++ * @param uhci_num UHCI number
++ * @param  config Ored mask of `uhci_frame_cfg_t`
++ *
++ * @return
++ *        - ESP_OK if succeed
++ *        - ESP_ERR_INVALID_ARG parameter error
++ */
++esp_err_t uhci_frame_config(int uhci_num, uhci_frame_cfg_t config);
++
++/**
++ * @brief Uninstall UHCI driver
++ *
++ * @param uhci_num UHCI number
++ *
++ * @return
++ *        - ESP_OK if succeed
++ *        - ESP_ERR_INVALID_ARG parameter error
++ */
++esp_err_t uhci_driver_uninstall(int uhci_num);
++
++#ifdef __cplusplus
++}
++#endif
+diff --git a/components/driver/uart.c b/components/driver/uart.c
+index 0afbba86a34..69e13a9f911 100644
+--- a/components/driver/uart.c
++++ b/components/driver/uart.c
+@@ -1767,3 +1767,10 @@ void uart_set_always_rx_timeout(uart_port_t uart_num, bool always_rx_timeout)
+         p_uart_obj[uart_num]->rx_always_timeout_flg = false;
+     }
+ }
++
++esp_err_t uart_set_rx_idle_thr(uart_port_t uart_num, uint32_t rx_idle_thr)
++{
++    ESP_RETURN_ON_FALSE((uart_num < UART_NUM_MAX), ESP_ERR_INVALID_ARG, UART_TAG, "uart_num error");
++    uart_hal_set_rx_idle_thr(&(uart_context[uart_num].hal), rx_idle_thr);
++    return ESP_OK;
++}
+diff --git a/components/driver/uhci.c b/components/driver/uhci.c
+new file mode 100644
+index 00000000000..7fa2ec7e820
+--- /dev/null
++++ b/components/driver/uhci.c
+@@ -0,0 +1,608 @@
++/*
++ * SPDX-FileCopyrightText: 2020-2021 Espressif Systems (Shanghai) CO LTD
++ *
++ * SPDX-License-Identifier: Apache-2.0
++ */
++
++#include <string.h>
++#include <stdint.h>
++#include "malloc.h"
++#include "esp_intr_alloc.h"
++#include "esp_log.h"
++#include "esp_check.h"
++#include "esp_attr.h"
++#include "esp_private/periph_ctrl.h"
++#include "freertos/FreeRTOS.h"
++#include "freertos/semphr.h"
++#include "freertos/ringbuf.h"
++#include "freertos/task.h"
++#include "freertos/portmacro.h"
++#include "hal/uhci_hal.h"
++#include "soc/uhci_periph.h"
++#include "soc/lldesc.h"
++#include "uhci.h"
++#if SOC_GDMA_SUPPORTED
++#include "esp_private/gdma.h"
++#endif
++
++#define DMA_TX_IDLE_NUM (0)
++#define DMA_RX_IDLE_THRD (20)
++#define DMA_RX_DESC_CNT (6)
++#define DMA_RX_BUF_SIZE (128)
++#define DMA_TX_BUF_SIZE  (256)
++
++#define UHCI_ENTER_CRITICAL_ISR(uhci_num)   portENTER_CRITICAL_ISR(&(uhci_contex[uhci_num].spinlock))
++#define UHCI_EXIT_CRITICAL_ISR(uhci_num)    portEXIT_CRITICAL_ISR(&(uhci_contex[uhci_num].spinlock))
++#define UHCI_ENTER_CRITICAL(uhci_num)       portENTER_CRITICAL(&(uhci_contex[uhci_num].spinlock))
++#define UHCI_EXIT_CRITICAL(uhci_num)        portEXIT_CRITICAL(&(uhci_contex[uhci_num].spinlock))
++
++static const char* UHCI_TAG = "uhci";
++
++#define UHCI_CONTEX_INIT_DEF(uhci_num) {\
++    .hal.dev = UHCI_LL_GET_HW(uhci_num),\
++    .spinlock = portMUX_INITIALIZER_UNLOCKED,\
++    .hw_enabled = false,\
++}
++
++typedef struct {
++    int uhci_num;                          /*!< UHCI port number */
++    lldesc_t **rx_dsc;                     /*!< Pointer to rx lldesc */
++    lldesc_t *tx_cur;                      /*!< Pointer to current tx data */
++    lldesc_t *rx_cur;                      /*!< Pointer to current rx data */
++    uint8_t *rb_ret;                       /*!< Ringbuffer return data pointer */
++    SemaphoreHandle_t rx_mux;              /*!< UHCI rx mutex */
++    SemaphoreHandle_t tx_mux;              /*!< UHCI tx mutex */
++    QueueHandle_t event_Queue;             /*!< UHCI event queue handler*/
++    QueueHandle_t tx_ready;                /*!< Tx ready handler */
++    QueueHandle_t tx_finished;             /*!< Tx finish handler */
++    RingbufHandle_t rx_ring_buf;           /*!< RX ringbuffer handle */
++    uhci_dma_config_t dma_cfg;             /*!< DMA desc configuration */
++    bool rx_buffer_full;                   /*!< RX ringbuffer full flag */
++    bool tx_idle;                          /*!< Tx idle flag */
++    size_t buffered_len;                   /*!< Buffered data size in ringbuffer */
++    size_t rb_rem;                         /*!< Rx buffer remain */
++    intr_handle_t intr_handle;             /*!< ISR handler */
++#if SOC_GDMA_SUPPORTED
++    gdma_channel_handle_t tx_handler;      /*!< GDMA tx channel handle*/
++    gdma_channel_handle_t rx_handler;      /*!< GDMA rx channel handle*/
++    int gdma_tx_chan;                      /*!< GDMA tx channel */
++    int gdma_rx_chan;                      /*!< GDMA rx channel */
++#endif
++} uhci_obj_t;
++
++typedef struct {
++    uhci_hal_context_t hal;
++    portMUX_TYPE spinlock;
++    bool hw_enabled;
++} uhci_context_t;
++
++uhci_context_t uhci_contex[UHCI_NUM_MAX] = {
++    UHCI_CONTEX_INIT_DEF(UHCI_NUM_0),
++#if UHCI_NUM_MAX > 1
++    UHCI_CONTEX_INIT_DEF(UHCI_NUM_1),
++#endif
++};
++
++uhci_obj_t *uhci_obj[UHCI_NUM_MAX] = {0};
++
++static void uhci_hw_enable(int uhci_num)
++{
++    if (uhci_contex[uhci_num].hw_enabled == false) {
++        periph_module_enable(uhci_periph_signal[uhci_num].module);
++        uhci_contex[uhci_num].hw_enabled = true;
++    }
++}
++
++static void uhci_hw_disable(int uhci_num)
++{
++    if (uhci_contex[uhci_num].hw_enabled == true) {
++        periph_module_disable(uhci_periph_signal[uhci_num].module);
++        uhci_contex[uhci_num].hw_enabled = false;
++    }
++}
++
++#if SOC_GDMA_SUPPORTED
++
++static bool IRAM_ATTR uhci_gdma_tx_callback_eof(gdma_channel_handle_t dma_chan, gdma_event_data_t *event_data, void *user_data)
++{
++    uhci_obj_t *pobj = (uhci_obj_t *)user_data;
++    portBASE_TYPE HPTaskAwoken = 0;
++    xQueueSendFromISR(pobj->tx_finished, (void * )&(pobj->tx_cur), &HPTaskAwoken);
++    lldesc_t *txdsc = NULL;
++    if (xQueueReceiveFromISR(pobj->tx_ready, (void * )&txdsc, &HPTaskAwoken) != pdTRUE) {
++        pobj->tx_idle = true;
++    } else {
++        pobj->tx_cur = txdsc;
++        gdma_start(pobj->tx_handler, (intptr_t)(txdsc));
++    }
++
++    if (HPTaskAwoken == pdTRUE) {
++        portYIELD_FROM_ISR();
++    }
++    return true;
++}
++
++static bool IRAM_ATTR uhci_gdma_rx_callback_eof(gdma_channel_handle_t dma_chan, gdma_event_data_t *event_data, void *user_data)
++{
++    uhci_obj_t *pobj = (uhci_obj_t *)user_data;
++    uhci_event_t event;
++    portBASE_TYPE HPTaskAwoken = 0;
++    event.type = pobj->rx_cur->eof ? (UHCI_EVENT_EOF | UHCI_EVENT_DATA) : UHCI_EVENT_DATA;
++    event.len = pobj->rx_cur->length;
++    if (pobj->rx_buffer_full == false) {
++        if (pdFALSE == xRingbufferSendFromISR(pobj->rx_ring_buf, (void *)pobj->rx_cur->buf, pobj->rx_cur->length, &HPTaskAwoken)) {
++            pobj->rx_buffer_full = true;
++            event.type = UHCI_EVENT_BUF_FULL;
++            event.len = 0;
++        } else {
++            pobj->buffered_len += pobj->rx_cur->length;
++        }
++    }
++
++    pobj->rx_cur = (lldesc_t *)pobj->rx_cur->empty;
++    if (pobj->event_Queue && xQueueSendFromISR(pobj->event_Queue, (void * )&event, &HPTaskAwoken) == pdFALSE) {
++        ESP_EARLY_LOGE(UHCI_TAG, "UHCI event queue full");
++    }
++
++    if (HPTaskAwoken == pdTRUE) {
++        portYIELD_FROM_ISR();
++    }
++
++    return true;
++}
++
++static esp_err_t uhci_gdma_initialize(int uhci_num, int *rx_dma_chan, int *tx_dma_chan)
++{
++    esp_err_t err = ESP_OK;
++    uhci_obj_t *puhci = uhci_obj[uhci_num];
++    gdma_channel_alloc_config_t tx_alloc_config = {
++        .flags.reserve_sibling = 1,
++        .direction = GDMA_CHANNEL_DIRECTION_TX,
++    };
++    err = gdma_new_channel(&tx_alloc_config, &puhci->tx_handler);
++    if (err != ESP_OK) {
++        return err;
++    }
++
++    gdma_channel_alloc_config_t rx_alloc_config = {
++        .direction = GDMA_CHANNEL_DIRECTION_RX,
++        .sibling_chan = puhci->tx_handler,
++    };
++    err = gdma_new_channel(&rx_alloc_config, &puhci->rx_handler);
++
++    if (err != ESP_OK) {
++        return err;
++    }
++
++    err = gdma_connect(puhci->tx_handler, GDMA_MAKE_TRIGGER(GDMA_TRIG_PERIPH_UART, 0));
++    if (err != ESP_OK) {
++        return err;
++    }
++    err = gdma_connect(puhci->rx_handler, GDMA_MAKE_TRIGGER(GDMA_TRIG_PERIPH_UART, 0));
++    if (err != ESP_OK) {
++        return err;
++    }
++
++    err = gdma_get_channel_id(puhci->tx_handler, tx_dma_chan);
++    if (err != ESP_OK) {
++        return err;
++    }
++
++    err = gdma_get_channel_id(puhci->rx_handler, rx_dma_chan);
++    if (err != ESP_OK) {
++        return err;
++    }
++
++    gdma_strategy_config_t strategy_config = {
++        .auto_update_desc = true,
++        .owner_check = true,
++    };
++    gdma_apply_strategy(puhci->tx_handler, &strategy_config);
++
++    gdma_tx_event_callbacks_t tx_cbk = {
++        .on_trans_eof = uhci_gdma_tx_callback_eof,
++    };
++
++    err = gdma_register_tx_event_callbacks(puhci->tx_handler, &tx_cbk, puhci);
++
++    gdma_rx_event_callbacks_t rx_cbk = {
++        .on_recv_eof = uhci_gdma_rx_callback_eof,
++    };
++
++    err = gdma_register_rx_event_callbacks(puhci->rx_handler, &rx_cbk, puhci);
++    if (err != ESP_OK) {
++        return err;
++    }
++    return err;
++
++}
++
++#else
++
++static void IRAM_ATTR uhci_isr_default(void *param)
++{
++    uhci_obj_t *pobj = (uhci_obj_t *)param;
++    int uhci_num = pobj->uhci_num;
++    portBASE_TYPE HPTaskAwoken = 0;
++    while (1) {
++        uint32_t intr_mask = uhci_hal_get_intr(&(uhci_contex[uhci_num].hal));
++        if (intr_mask == 0) {
++            break;
++        }
++        uhci_hal_clear_intr(&(uhci_contex[uhci_num].hal), intr_mask);
++        /* handle RX interrupt */
++        if (intr_mask & UHCI_RX_INTR) {
++            uhci_event_t event;
++            event.type = pobj->rx_cur->eof ? (UHCI_EVENT_EOF | UHCI_EVENT_DATA) : UHCI_EVENT_DATA;
++            event.len = pobj->rx_cur->length;
++            if (pobj->rx_buffer_full == false) {
++                if (pdFALSE == xRingbufferSendFromISR(pobj->rx_ring_buf, (void *)pobj->rx_cur->buf, pobj->rx_cur->length, &HPTaskAwoken)) {
++                    pobj->rx_buffer_full = true;
++                    event.type = UHCI_EVENT_BUF_FULL;
++                    event.len = 0;
++                } else {
++                    pobj->buffered_len += pobj->rx_cur->length;
++                }
++            }
++
++            pobj->rx_cur = (lldesc_t *)pobj->rx_cur->empty;
++            if (pobj->event_Queue && xQueueSendFromISR(pobj->event_Queue, (void * )&event, &HPTaskAwoken) == pdFALSE) {
++                ESP_EARLY_LOGE(UHCI_TAG, "UHCI event queue full");
++            }
++        }
++        /* handle TX interrupt */
++        if (intr_mask & UHCI_TX_INTR) {
++            xQueueSendFromISR(pobj->tx_finished, (void * )&(pobj->tx_cur), &HPTaskAwoken);
++            lldesc_t *txdsc = NULL;
++            if (xQueueReceiveFromISR(pobj->tx_ready, (void * )&txdsc, &HPTaskAwoken) != pdTRUE) {
++                pobj->tx_idle = true;
++            } else {
++                pobj->tx_cur = txdsc;
++                uhci_hal_set_tx_dma(&(uhci_contex[uhci_num].hal), (uint32_t)(txdsc));
++                uhci_hal_tx_dma_start(&(uhci_contex[uhci_num].hal));
++            }
++        }
++    }
++    if (HPTaskAwoken == pdTRUE) {
++        portYIELD_FROM_ISR();
++    }
++}
++
++#endif // SOC_GDMA_SUPPORTED
++
++static void uhci_rx_start(int uhci_num)
++{
++    uhci_obj_t *pobj = uhci_obj[uhci_num];
++#if SOC_GDMA_SUPPORTED
++    gdma_start(pobj->rx_handler, (uint32_t)(pobj->rx_dsc[0]));
++#else
++    uhci_hal_set_rx_dma(&(uhci_contex[uhci_num].hal), (uint32_t)(pobj->rx_dsc[0]));
++    uhci_hal_rx_dma_start(&(uhci_contex[uhci_num].hal));
++    uhci_hal_enable_intr(&(uhci_contex[uhci_num].hal), UHCI_RX_INTR);
++#endif
++}
++
++static void uhci_dma_desc_buf_del(lldesc_t** desc, int desc_cnt)
++{
++    if (desc != NULL) {
++        for (int i = 0; i < desc_cnt; i++) {
++            if (desc[i] == NULL) {
++                break;
++            }
++            free(desc[i]);
++            desc[i] = NULL;
++        }
++        free(desc);
++    }
++}
++
++static void IRAM_ATTR dma_desc_setup(lldesc_t *dsc, size_t size, size_t len, uint8_t *pbuf, bool eof, uint32_t next)
++{
++    dsc->size = size;
++    dsc->length = len;
++    dsc->owner = 1;
++    dsc->buf = pbuf;
++    dsc->eof = eof;
++    dsc->empty = next;
++}
++
++static lldesc_t** uhci_dma_desc_buf_create(int desc_cnt, size_t buf_size)
++{
++    lldesc_t** pdesc = (lldesc_t**)malloc(sizeof(lldesc_t*) * desc_cnt);
++    if (pdesc == NULL) {
++        goto error;
++    }
++    memset(pdesc, 0, sizeof(lldesc_t*) * desc_cnt);
++    for (int i = 0; i < desc_cnt; i++) {
++        pdesc[i] = (lldesc_t*)malloc(sizeof(lldesc_t) + buf_size);
++        if (pdesc[i] == NULL) {
++            goto error;
++        }
++        memset(pdesc[i], 0, sizeof(lldesc_t) + buf_size);
++    }
++    return pdesc;
++error:
++    uhci_dma_desc_buf_del(pdesc, desc_cnt);
++    return NULL;
++}
++
++size_t uhci_dma_read_bytes(int uhci_num, uint8_t *pbuf, size_t read_size, TickType_t ticks_to_wait)
++{
++    ESP_RETURN_ON_FALSE((uhci_num < UHCI_NUM_MAX), ESP_ERR_INVALID_ARG, UHCI_TAG, "UHCI number err");
++    ESP_RETURN_ON_FALSE((pbuf != NULL), ESP_ERR_INVALID_ARG, UHCI_TAG, "Read buffer null");
++    ESP_RETURN_ON_FALSE((uhci_obj[uhci_num] != NULL), ESP_ERR_INVALID_ARG, UHCI_TAG, "driver not installed");
++    uint8_t *rd_ptr = pbuf;
++    size_t rd_rem = read_size;
++    uint8_t *rb_cur = NULL;
++
++    TickType_t tick_rem = 0;
++    TickType_t tick_end = xTaskGetTickCount() + ticks_to_wait;
++    if (xSemaphoreTake(uhci_obj[uhci_num]->rx_mux,(portTickType)ticks_to_wait) != pdTRUE) {
++        return 0;
++    }
++    while (rd_rem) {
++        if (uhci_obj[uhci_num]->rb_rem == 0) {
++            rb_cur = (uint8_t*)xRingbufferReceive(uhci_obj[uhci_num]->rx_ring_buf, &(uhci_obj[uhci_num]->rb_rem), (TickType_t)tick_rem);
++            if (rb_cur == NULL) {
++                break;
++            }
++            uhci_obj[uhci_num]->rb_ret = rb_cur;
++        }
++        size_t rd_size = uhci_obj[uhci_num]->rb_rem > rd_rem ? rd_rem : uhci_obj[uhci_num]->rb_rem;
++        memcpy(rd_ptr, rb_cur, rd_size);
++        UHCI_ENTER_CRITICAL(uhci_num);
++        uhci_obj[uhci_num]->buffered_len -= rd_size;
++        UHCI_EXIT_CRITICAL(uhci_num);
++        uhci_obj[uhci_num]->rb_rem -= rd_size;
++        rb_cur += rd_size;
++        rd_ptr += rd_size;
++        rd_rem -= rd_size;
++        if (uhci_obj[uhci_num]->rb_rem == 0) {
++            vRingbufferReturnItem(uhci_obj[uhci_num]->rx_ring_buf, (void *)uhci_obj[uhci_num]->rb_ret);
++            UHCI_ENTER_CRITICAL(uhci_num);
++            if(uhci_obj[uhci_num]->rx_buffer_full) {
++                uhci_obj[uhci_num]->rx_buffer_full = false;
++            }
++            UHCI_EXIT_CRITICAL(uhci_num);
++            uhci_obj[uhci_num]->rb_ret = NULL;
++        }
++        tick_rem = (ticks_to_wait == portMAX_DELAY ) ? portMAX_DELAY : tick_end - xTaskGetTickCount();
++    }
++    xSemaphoreGive(uhci_obj[uhci_num]->rx_mux);
++    return (read_size - rd_rem);
++}
++
++esp_err_t uhci_rx_dma_flush(int uhci_num)
++{
++    ESP_RETURN_ON_FALSE((uhci_num < UHCI_NUM_MAX), ESP_ERR_INVALID_ARG, UHCI_TAG, "UHCI number err");
++    ESP_RETURN_ON_FALSE((uhci_obj[uhci_num] != NULL), ESP_ERR_INVALID_ARG, UHCI_TAG, "driver not installed");
++    size_t buffered_size = 0;
++    uhci_obj_t *pobj = uhci_obj[uhci_num];
++    xSemaphoreTake(pobj->rx_mux,(portTickType)portMAX_DELAY);
++#if SOC_GDMA_SUPPORTED
++    gdma_stop(pobj->tx_handler);
++#else
++    uhci_hal_rx_dma_stop(&(uhci_contex[uhci_num].hal));
++    uhci_hal_disable_intr(&(uhci_contex[uhci_num].hal), UHCI_RX_INTR);
++    uhci_hal_clear_intr(&(uhci_contex[uhci_num].hal), UHCI_RX_INTR);
++#endif
++    if (pobj->rb_ret) {
++        vRingbufferReturnItem(pobj->rx_ring_buf, (void *)pobj->rb_ret);
++        pobj->rb_ret = NULL;
++    }
++    // Empty the ringbuffer
++    uint8_t *pdata = (uint8_t*)xRingbufferReceive(pobj->rx_ring_buf, &(buffered_size), (TickType_t)0);
++    if (pdata) {
++        vRingbufferReturnItem(pobj->rx_ring_buf, (void *)pdata);
++    }
++    for (int i = 0; i < pobj->dma_cfg.rx_dma_cnt; i++) {
++        dma_desc_setup((pobj->rx_dsc[i]),
++                         (pobj->dma_cfg.rx_dma_buf_size),
++                         (0),
++                         ((uint8_t *)pobj->rx_dsc[i]->buf),
++                         (0),
++                         ((uint32_t)pobj->rx_dsc[(i + 1) % pobj->dma_cfg.rx_dma_cnt]));
++    }
++    pobj->rx_cur = pobj->rx_dsc[0];
++    pobj->rb_rem = 0;
++    pobj->buffered_len = 0;
++    pobj->rx_buffer_full = false;
++    uhci_rx_start(uhci_num);
++    xSemaphoreGive(pobj->rx_mux);
++    return ESP_OK;
++}
++
++size_t uhci_dma_write_bytes(int uhci_num, uint8_t *pbuf, size_t write_size, bool eof_set)
++{
++    ESP_RETURN_ON_FALSE((uhci_num < UHCI_NUM_MAX), ESP_ERR_INVALID_ARG, UHCI_TAG, "UHCI number err");
++    ESP_RETURN_ON_FALSE((pbuf != NULL), ESP_ERR_INVALID_ARG, UHCI_TAG, "write buffer null");
++    ESP_RETURN_ON_FALSE((uhci_obj[uhci_num] != NULL), ESP_ERR_INVALID_ARG, UHCI_TAG, "driver not installed");
++
++    uint8_t *pr = pbuf;
++    lldesc_t *pdsc = NULL;
++    size_t size_rem = write_size, size_tmp = 0;
++    xSemaphoreTake(uhci_obj[uhci_num]->tx_mux, (portTickType)portMAX_DELAY);
++    while (size_rem) {
++        size_tmp = size_rem > (uhci_obj[uhci_num]->dma_cfg.rx_dma_buf_size) ? (uhci_obj[uhci_num]->dma_cfg.rx_dma_buf_size) : size_rem;
++        xQueueReceive(uhci_obj[uhci_num]->tx_finished, (void *)&pdsc, (portTickType)portMAX_DELAY);
++        memcpy((void *)(pdsc->buf), (void *)pr, size_tmp);
++        dma_desc_setup((pdsc),
++                         (size_tmp),
++                         (size_tmp),
++                         ((uint8_t *)pdsc->buf),
++                         (1),
++                         (0));
++        xQueueSend(uhci_obj[uhci_num]->tx_ready, (void *)&pdsc, (portTickType)0);
++        size_rem -= size_tmp;
++        pr += size_tmp;
++        // TX DMA IDLE, start UHCI
++        if (uhci_obj[uhci_num]->tx_idle == true) {
++            xQueueReceive(uhci_obj[uhci_num]->tx_ready, (void *)&pdsc, 0);
++            UHCI_ENTER_CRITICAL(uhci_num);
++            uhci_obj[uhci_num]->tx_idle = false;
++            uhci_obj[uhci_num]->tx_cur = pdsc;
++            UHCI_EXIT_CRITICAL(uhci_num);
++#if SOC_GDMA_SUPPORTED
++            gdma_start(uhci_obj[uhci_num]->tx_handler, (intptr_t)(pdsc));
++#else
++            uhci_hal_set_tx_dma(&(uhci_contex[uhci_num].hal), (uint32_t)(pdsc));
++            uhci_hal_tx_dma_start(&(uhci_contex[uhci_num].hal));
++#endif
++        }
++    }
++    xSemaphoreGive(uhci_obj[uhci_num]->tx_mux);
++    return write_size;
++}
++
++esp_err_t uhci_driver_uninstall(int uhci_num)
++{
++    ESP_RETURN_ON_FALSE((uhci_num < UHCI_NUM_MAX), ESP_ERR_INVALID_ARG, UHCI_TAG, "UHCI number err");
++    if (uhci_obj[uhci_num] != NULL) {
++        uhci_hw_disable(uhci_num);
++        if (uhci_obj[uhci_num]->intr_handle) {
++            esp_intr_free(uhci_obj[uhci_num]->intr_handle);
++        }
++        if (uhci_obj[uhci_num]->rx_ring_buf) {
++            vRingbufferDelete(uhci_obj[uhci_num]->rx_ring_buf);
++        }
++        if (uhci_obj[uhci_num]->tx_ready) {
++            vQueueDelete(uhci_obj[uhci_num]->tx_ready);
++        }
++        if (uhci_obj[uhci_num]->tx_finished) {
++            vQueueDelete(uhci_obj[uhci_num]->tx_finished);
++        }
++        if (uhci_obj[uhci_num]->event_Queue) {
++            vQueueDelete(uhci_obj[uhci_num]->event_Queue);
++        }
++        if (uhci_obj[uhci_num]->tx_mux) {
++            vSemaphoreDelete(uhci_obj[uhci_num]->tx_mux);
++        }
++        if (uhci_obj[uhci_num]->rx_mux) {
++            vSemaphoreDelete(uhci_obj[uhci_num]->rx_mux);
++        }
++#if SOC_GDMA_SUPPORTED
++        gdma_stop(uhci_obj[uhci_num]->rx_handler);
++        gdma_stop(uhci_obj[uhci_num]->tx_handler);
++#endif
++        if (uhci_obj[uhci_num]->rx_dsc) {
++            uhci_dma_desc_buf_del(uhci_obj[uhci_num]->rx_dsc, uhci_obj[uhci_num]->dma_cfg.rx_dma_cnt);
++        }
++        if (uhci_obj[uhci_num]) {
++            heap_caps_free(uhci_obj[uhci_num]);
++            uhci_obj[uhci_num] = NULL;
++        }
++
++    }
++    return ESP_OK;
++}
++
++esp_err_t uhci_driver_install(int uhci_num, uhci_dma_config_t *config, size_t rx_rb_size, int queue_cnt, QueueHandle_t *event_queue)
++{
++    ESP_RETURN_ON_FALSE((uhci_num < UHCI_NUM_MAX), ESP_ERR_INVALID_ARG, UHCI_TAG, "UHCI number err");
++    ESP_RETURN_ON_FALSE((config != NULL), ESP_ERR_INVALID_ARG, UHCI_TAG, "dma configuration args null");
++    ESP_RETURN_ON_FALSE((uhci_obj[uhci_num] == NULL), ESP_ERR_INVALID_ARG, UHCI_TAG, "UHCI driver already installed");
++    uhci_obj_t *puhci = (uhci_obj_t *)heap_caps_calloc(1, sizeof(uhci_obj_t), MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);
++    esp_err_t ret = ESP_OK;
++
++    if (!puhci) {
++        ESP_LOGE(UHCI_TAG, "UHCI driver obj malloc fail");
++        return ESP_ERR_NO_MEM;
++    }
++    uhci_obj[uhci_num] = puhci;
++    memset((void *)puhci, 0, sizeof(uhci_obj_t));
++    puhci->uhci_num = uhci_num;
++    memcpy((void *)&(puhci->dma_cfg), (void *)config, sizeof(uhci_dma_config_t));
++    puhci->rx_ring_buf = xRingbufferCreate(rx_rb_size, RINGBUF_TYPE_BYTEBUF);
++    if (puhci->rx_ring_buf == NULL) {
++        ESP_LOGE(UHCI_TAG, "UHCI ringbuffer create fail\n");
++        goto err;
++    }
++    lldesc_t** tx_dsc = uhci_dma_desc_buf_create(config->tx_dma_cnt, config->tx_dma_buf_size);
++    if (tx_dsc == NULL) {
++        ESP_LOGE(UHCI_TAG, "UHCI tx dma desc create fail\n");
++        goto err;
++    }
++    //TX dma desc
++    for (int i = 0; i < config->tx_dma_cnt; i++) {
++        dma_desc_setup((tx_dsc[i]),
++                         (config->tx_dma_buf_size),
++                         (0),
++                         ((uint8_t *)(((uint32_t)tx_dsc[i]) + sizeof(lldesc_t))),
++                         (0),
++                         (0));
++    }
++    puhci->rx_dsc = uhci_dma_desc_buf_create(config->rx_dma_cnt, config->rx_dma_buf_size);
++    if (puhci->rx_dsc == NULL) {
++        ESP_LOGE(UHCI_TAG, "UHCI rx dma desc create fail\n");
++        goto err;
++    }
++    //RX dma desc
++    for (int i = 0; i < config->rx_dma_cnt; i++) {
++        dma_desc_setup((puhci->rx_dsc[i]),
++                         (config->rx_dma_buf_size),
++                         (0),
++                         ((uint8_t *)(((uint32_t)puhci->rx_dsc[i]) + sizeof(lldesc_t))),
++                         (0),
++                         ((uint32_t)puhci->rx_dsc[(i+1) % config->rx_dma_cnt]));
++
++    }
++    puhci->tx_ready = xQueueCreate(config->tx_dma_cnt, sizeof(lldesc_t*));
++    puhci->tx_finished = xQueueCreate(config->tx_dma_cnt, sizeof(lldesc_t*));
++    if (event_queue != NULL && queue_cnt > 0) {
++        puhci->event_Queue = xQueueCreate(queue_cnt, sizeof(uhci_event_t));
++        *event_queue = puhci->event_Queue;
++    }
++    if ((puhci->tx_ready == NULL) || (puhci->tx_finished == NULL) || ((puhci->event_Queue == NULL) && (queue_cnt > 0))) {
++        ESP_LOGE(UHCI_TAG, "UHCI Queue create fail\n");
++        goto err;
++    }
++    puhci->tx_mux = xSemaphoreCreateMutex();
++    puhci->rx_mux = xSemaphoreCreateMutex();
++    if (puhci->tx_mux == NULL || puhci->rx_mux == NULL) {
++        ESP_LOGE(UHCI_TAG, "UHCI Semaphore create fail\n");
++        goto err;
++    }
++    puhci->tx_idle = true;
++    puhci->rx_cur = puhci->rx_dsc[0];
++    for (int i = 0; i < config->tx_dma_cnt; i++) {
++        xQueueSend(puhci->tx_finished, (void * )&(tx_dsc[i]), 0);
++    }
++    uhci_hw_enable(uhci_num);
++    uhci_hal_init(&(uhci_contex[uhci_num].hal), uhci_num);
++
++#if SOC_GDMA_SUPPORTED
++    ret = uhci_gdma_initialize(uhci_num, &(puhci->gdma_tx_chan), &(puhci->gdma_rx_chan));
++#else
++    ret = esp_intr_alloc(uhci_periph_signal[uhci_num].irq, 0, &uhci_isr_default, uhci_obj[uhci_num], &uhci_obj[uhci_num]->intr_handle);
++#endif
++    if (ret != ESP_OK) {
++        goto err;
++    }
++    return ESP_OK;
++err:
++    uhci_driver_uninstall(uhci_num);
++    return ESP_ERR_NO_MEM;
++}
++
++esp_err_t uhci_set_rx_eof_mode(int uhci_num, uint32_t eof_mode)
++{
++    ESP_RETURN_ON_FALSE((uhci_num < UHCI_NUM_MAX), ESP_ERR_INVALID_ARG, UHCI_TAG, "UHCI number err");
++    uhci_hal_set_rx_eof_mode(&(uhci_contex[uhci_num].hal), eof_mode);
++    return ESP_OK;
++}
++
++esp_err_t uhci_attach_uart_port_and_start(int uhci_num, int uart_num)
++{
++    ESP_RETURN_ON_FALSE((uhci_num < UHCI_NUM_MAX), ESP_ERR_INVALID_ARG, UHCI_TAG, "UHCI number err");
++    ESP_RETURN_ON_FALSE((uhci_obj[uhci_num] != NULL), ESP_ERR_INVALID_ARG, UHCI_TAG, "driver not installed");
++    uhci_hal_attach_uart_port(&(uhci_contex[uhci_num].hal), uart_num);
++    uhci_rx_start(uhci_num);
++    return ESP_OK;
++}
++
++esp_err_t uhci_frame_config(int uhci_num, uhci_frame_cfg_t config)
++{
++    ESP_RETURN_ON_FALSE((uhci_num < UHCI_NUM_MAX), ESP_ERR_INVALID_ARG, UHCI_TAG, "UHCI number err");
++    uhci_hal_frame_config(&(uhci_contex[uhci_num].hal), config);
++    return ESP_OK;
++}
+diff --git a/components/hal/CMakeLists.txt b/components/hal/CMakeLists.txt
+index 00ea9f21495..9d6da13bf46 100644
+--- a/components/hal/CMakeLists.txt
++++ b/components/hal/CMakeLists.txt
+@@ -66,6 +66,7 @@ if(NOT BOOTLOADER_BUILD)
+                     "usb_phy_hal.c"
+                     "xt_wdt_hal.c"
+                     "i2s_hal.c"
++                    "uhci_hal.c"
+                     "twai_hal.c"
+                     "twai_hal_iram.c"
+                     "aes_hal.c"
+@@ -95,6 +96,7 @@ if(NOT BOOTLOADER_BUILD)
+             "usb_phy_hal.c"
+             "xt_wdt_hal.c"
+             "i2s_hal.c"
++            "uhci_hal.c"
+             "twai_hal.c"
+             "twai_hal_iram.c"
+             "aes_hal.c"
+@@ -117,6 +119,7 @@ if(NOT BOOTLOADER_BUILD)
+               "systimer_hal.c"
+               "xt_wdt_hal.c"
+               "i2s_hal.c"
++              "uhci_hal.c"
+               "twai_hal.c"
+               "twai_hal_iram.c"
+               "aes_hal.c"
+diff --git a/components/hal/esp32c3/include/hal/uhci_ll.h b/components/hal/esp32c3/include/hal/uhci_ll.h
+index a766797ea0f..09305c06d76 100644
+--- a/components/hal/esp32c3/include/hal/uhci_ll.h
++++ b/components/hal/esp32c3/include/hal/uhci_ll.h
+@@ -1,38 +1,36 @@
+-// Copyright 2020 Espressif Systems (Shanghai) PTE LTD
+-//
+-// Licensed under the Apache License, Version 2.0 (the "License");
+-// you may not use this file except in compliance with the License.
+-// You may obtain a copy of the License at
+-//
+-//     http://www.apache.org/licenses/LICENSE-2.0
+-//
+-// Unless required by applicable law or agreed to in writing, software
+-// distributed under the License is distributed on an "AS IS" BASIS,
+-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+-// See the License for the specific language governing permissions and
+-// limitations under the License.
++/*
++ * SPDX-FileCopyrightText: 2020-2021 Espressif Systems (Shanghai) CO LTD
++ *
++ * SPDX-License-Identifier: Apache-2.0
++ */
+ 
+ // The LL layer for UHCI register operations.
+ // Note that most of the register operations in this layer are non-atomic operations.
+ 
+ 
+ #pragma once
+-#include <stdio.h>
+ #include "hal/uhci_types.h"
++#include "soc/uhci_periph.h"
+ #include "soc/uhci_struct.h"
++#include <stdlib.h>
+ 
+ #ifdef __cplusplus
+ extern "C" {
+ #endif
+ 
+-#define UHCI_LL_GET_HW(num) (((num) == 0) ? (&UHCI0) : (NULL))
++#define UHCI_LL_GET_HW(num) (&UHCI0)
++
++#define UHCI_INTR_MASK         (0x7fff) //All interrupt mask
++
++#define UHCI_RX_INTR  (GDMA_LL_EVENT_RX_DONE | GDMA_LL_EVENT_RX_SUC_EOF)
++#define UHCI_TX_INTR  (GDMA_LL_EVENT_TX_EOF | GDMA_LL_EVENT_TX_TOTAL_EOF)
+ 
+ typedef enum {
+-    UHCI_RX_BREAK_CHR_EOF = 0x1,
+-    UHCI_RX_IDLE_EOF      = 0x2,
+-    UHCI_RX_LEN_EOF       = 0x4,
+-    UHCI_RX_EOF_MAX       = 0x7,
+-} uhci_rxeof_cfg_t;
++    UHCI_INTR_IN_DONE         = (0x1 << 0),
++    UHCI_INTR_IN_SUC_EOF      = (0x1 << 1),
++    UHCI_INTR_OUT_DONE        = (0x1 << 3),
++    UHCI_INTR_OUT_TOT_EOF     = (0x1 << 8),
++} uhci_intr_t;
+ 
+ static inline void uhci_ll_init(uhci_dev_t *hw)
+ {
+@@ -50,11 +48,11 @@ static inline void uhci_ll_attach_uart_port(uhci_dev_t *hw, int uart_num)
+     hw->conf0.uart1_ce = (uart_num == 1)? 1: 0;
+ }
+ 
+-static inline void uhci_ll_set_seper_chr(uhci_dev_t *hw, uhci_seper_chr_t *seper_char)
++static inline void uhci_ll_set_seper_chr(uhci_dev_t *hw, uhci_esc_chr_t *seper_char)
+ {
+     if (seper_char->sub_chr_en) {
+         typeof(hw->esc_conf0) esc_conf0_reg = hw->esc_conf0;
+-        esc_conf0_reg.seper_char = seper_char->seper_chr;
++        esc_conf0_reg.seper_char = seper_char->esc_chr;
+         esc_conf0_reg.seper_esc_char0 = seper_char->sub_chr1;
+         esc_conf0_reg.seper_esc_char1 = seper_char->sub_chr2;
+         hw->esc_conf0.val = esc_conf0_reg.val;
+@@ -66,13 +64,13 @@ static inline void uhci_ll_set_seper_chr(uhci_dev_t *hw, uhci_seper_chr_t *seper
+     }
+ }
+ 
+-static inline void uhci_ll_get_seper_chr(uhci_dev_t *hw, uhci_seper_chr_t *seper_chr)
++static inline void uhci_ll_get_seper_chr(uhci_dev_t *hw, uhci_esc_chr_t *seper_chr)
+ {
+     (void)hw;
+     (void)seper_chr;
+ }
+ 
+-static inline void uhci_ll_set_swflow_ctrl_sub_chr(uhci_dev_t *hw, uhci_swflow_ctrl_sub_chr_t *sub_ctr)
++static inline void uhci_ll_set_swflow_ctrl_sub_chr(uhci_dev_t *hw, uhci_swflow_esc_char_t *sub_ctr)
+ {
+     typeof(hw->escape_conf) escape_conf_reg = hw->escape_conf;
+     if (sub_ctr->flow_en == 1) {
+@@ -120,19 +118,28 @@ static inline uint32_t uhci_ll_get_intr(uhci_dev_t *hw)
+ }
+ 
+ 
+-static inline void uhci_ll_set_eof_mode(uhci_dev_t *hw, uint32_t eof_mode)
++static inline void uhci_ll_set_rx_eof_mode(uhci_dev_t *hw, uint32_t eof_mode)
+ {
+-    if (eof_mode & UHCI_RX_BREAK_CHR_EOF) {
+-        hw->conf0.uart_rx_brk_eof_en = 1;
+-    }
+-    if (eof_mode & UHCI_RX_IDLE_EOF) {
+-        hw->conf0.uart_idle_eof_en = 1;
+-    }
+-    if (eof_mode & UHCI_RX_LEN_EOF) {
+-        hw->conf0.len_eof_en = 1;
+-    }
++    hw->conf0.uart_rx_brk_eof_en = (eof_mode & UHCI_RX_BREAK_EOF) ? 1 : 0;
++    hw->conf0.uart_idle_eof_en = (eof_mode & UHCI_RX_IDLE_EOF) ? 1 : 0;
++    hw->conf0.len_eof_en = (eof_mode & UHCI_RX_LEN_EOF) ? 1 : 0;
+ }
+ 
++/**
++ * @brief  Configure UHCI to use separate char and header in the frame.
++ *
++ * @param  hw Beginning address of the peripheral registers
++ * @param  fram_cfg Ored mask of `uhci_frame_cfg_t`
++ *
++ * @return None.
++ */
++static inline void uhci_ll_fram_config(uhci_dev_t *hw, uhci_frame_cfg_t fram_cfg)
++{
++    hw->conf0.seper_en = (fram_cfg & UHCI_FRAME_SEPER_CHAR_EN) > 0;
++    hw->conf0.head_en = (fram_cfg & UHCI_FRAME_HEAD_EN) > 0;
++}
++
++
+ #ifdef __cplusplus
+ }
+ #endif
+diff --git a/components/hal/esp32h2/include/hal/uhci_types.h b/components/hal/esp32h2/include/hal/uhci_types.h
+deleted file mode 100644
+index 9cfff67fbbd..00000000000
+--- a/components/hal/esp32h2/include/hal/uhci_types.h
++++ /dev/null
+@@ -1,54 +0,0 @@
+-// Copyright 2015-2019 Espressif Systems (Shanghai) PTE LTD
+-//
+-// Licensed under the Apache License, Version 2.0 (the "License");
+-// you may not use this file except in compliance with the License.
+-// You may obtain a copy of the License at
+-
+-//     http://www.apache.org/licenses/LICENSE-2.0
+-//
+-// Unless required by applicable law or agreed to in writing, software
+-// distributed under the License is distributed on an "AS IS" BASIS,
+-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+-// See the License for the specific language governing permissions and
+-// limitations under the License.
+-
+-
+-
+-// Though the UHCI driver hasn't been published, some types are defined here
+-// for users to develop over the HAL. See example: controller_hci_uart_esp32h2
+-
+-#pragma once
+-
+-#ifdef __cplusplus
+-extern "C" {
+-#endif
+-
+-#include <stdint.h>
+-#include <stdbool.h>
+-
+-/**
+- * @brief UHCI escape sequence
+- */
+-typedef struct {
+-    uint8_t seper_chr;        /*!< escape sequence character */
+-    uint8_t sub_chr1;         /*!< escape sequence sub-character 1 */
+-    uint8_t sub_chr2;         /*!< escape sequence sub-character 2 */
+-    bool sub_chr_en;          /*!< enable use of sub-chaacter of escape sequence */
+-} uhci_seper_chr_t;
+-
+-/**
+- * @brief UHCI software flow control
+- */
+-typedef struct {
+-    uint8_t xon_chr;          /*!< character for XON */
+-    uint8_t xon_sub1;         /*!< sub-character 1 for XON */
+-    uint8_t xon_sub2;         /*!< sub-character 2 for XON */
+-    uint8_t xoff_chr;         /*!< character 2 for XOFF */
+-    uint8_t xoff_sub1;        /*!< sub-character 1 for XOFF */
+-    uint8_t xoff_sub2;        /*!< sub-character 2 for XOFF */
+-    uint8_t flow_en;          /*!< enable use of software flow control */
+-} uhci_swflow_ctrl_sub_chr_t;
+-
+-#ifdef __cplusplus
+-}
+-#endif
+diff --git a/components/hal/esp32s2/include/hal/uhci_ll.h b/components/hal/esp32s2/include/hal/uhci_ll.h
+new file mode 100644
+index 00000000000..2c9feaf9d0a
+--- /dev/null
++++ b/components/hal/esp32s2/include/hal/uhci_ll.h
+@@ -0,0 +1,353 @@
++/*
++ * SPDX-FileCopyrightText: 2020-2021 Espressif Systems (Shanghai) CO LTD
++ *
++ * SPDX-License-Identifier: Apache-2.0
++ */
++
++// The LL layer for UHCI register operations.
++// Note that most of the register operations in this layer are non-atomic operations.
++
++
++#pragma once
++#include "hal/uhci_types.h"
++#include "soc/uhci_periph.h"
++
++#define UHCI_RX_INTR  (UHCI_INTR_IN_DONE | UHCI_INTR_IN_SUC_EOF)
++#define UHCI_TX_INTR  (UHCI_INTR_OUT_DONE | UHCI_INTR_OUT_TOT_EOF)
++
++#define UHCI_INTR_MASK         (0x7fff) //All interrupt mask
++
++#define UHCI_LL_GET_HW(num) (&UHCI0)
++
++typedef enum {
++    UHCI_INTR_RX_START        = (0x1 << 0),
++    UHCI_INTR_TX_START        = (0x1 << 1),
++    UHCI_INTR_RX_HUNG         = (0x1 << 2),
++    UHCI_INTR_TX_HUNG         = (0x1 << 3),
++    UHCI_INTR_IN_DONE         = (0x1 << 4),
++    UHCI_INTR_IN_SUC_EOF      = (0x1 << 5),
++    UHCI_INTR_IN_ERR_EOF      = (0x1 << 6),
++    UHCI_INTR_OUT_DONE        = (0x1 << 7),
++    UHCI_INTR_OUT_EOF         = (0x1 << 8),
++    UHCI_INTR_IN_DSCR_ERR     = (0x1 << 9),
++    UHCI_INTR_OUT_DSCR_ERR    = (0x1 << 10),
++    UHCI_INTR_IN_DSCR_EMPTY   = (0x1 << 11),
++    UHCI_INTR_OUTLINK_EOF_ERR = (0x1 << 12),
++    UHCI_INTR_OUT_TOT_EOF     = (0x1 << 13),
++    UHCI_INTR_SEND_S_Q        = (0x1 << 14),
++    UHCI_INTR_SEND_A_Q        = (0x1 << 15),
++    UHCI_INTR_IN_FIFO_FULL    = (0x1 << 16),
++} uhci_intr_t;
++
++/**
++ * @brief Init UHCI hardware
++ *
++ * @param  hw Beginning address of the UHCI peripheral registers
++ *
++ * @return None
++ */
++static inline void uhci_ll_init(uhci_dev_t *hw)
++{
++    typeof(hw->conf0) conf0_reg;
++    hw->conf0.clk_en = 1;
++    conf0_reg.val = 0;
++    conf0_reg.clk_en = 1;
++    hw->conf0.val = conf0_reg.val;
++    hw->conf1.val = 0;
++    hw->conf1.dma_in_fifo_full_thrs = 100;
++    hw->conf1.check_owner = 1;
++    hw->hung_conf.val = 0;
++
++    hw->conf0.in_rst = 1;
++    hw->conf0.in_rst = 0;
++    hw->conf0.out_rst = 1;
++    hw->conf0.out_rst = 0;
++}
++
++/**
++ * @brief  Attach UART port to DMA
++ *
++ * @param  hw Beginning address of the peripheral registers
++ * @param  uart_num The UART port to be attached
++ *
++ * @return None
++ */
++static inline void uhci_ll_attach_uart_port(uhci_dev_t *hw, int uart_num)
++{
++    typeof(hw->conf0) conf0_reg = hw->conf0;
++    conf0_reg.val &= 0xfffff9ff;
++    conf0_reg.val |= (0x1 << (9+uart_num));
++    hw->conf0.val = conf0_reg.val;
++    hw->conf0.uart0_ce = (uart_num == 0)? 1: 0;
++    hw->conf0.uart1_ce = (uart_num == 1)? 1: 0;
++}
++
++/**
++ * @brief  Reset UHCI in link operations.
++ *
++ * @param  hw Beginning address of the peripheral registers
++ *
++ * @return None
++ */
++static inline void uhci_ll_dma_in_reset(uhci_dev_t *hw)
++{
++    hw->conf0.in_rst = 1;
++    hw->conf0.in_rst = 0;
++}
++
++/**
++ * @brief  Reset UHCI out link operations
++ *
++ * @param  hw Beginning address of the peripheral registers
++ *
++ * @return None
++ */
++static inline void uhci_ll_dma_out_reset(uhci_dev_t *hw)
++{
++    hw->conf0.out_rst = 1;
++    hw->conf0.out_rst = 0;
++}
++
++/**
++ * @brief  Enable UHCI interrupt
++ *
++ * @param  hw Beginning address of the peripheral registers
++ * @param  intr_mask Bit map of the interrupts needs to be enabled
++ *
++ * @return None
++ */
++static inline void uhci_ll_enable_intr(uhci_dev_t *hw, uint32_t intr_mask)
++{
++    hw->int_ena.val |= intr_mask;
++}
++
++/**
++ * @brief  Disable UHCI interrupt
++ *
++ * @param  hw Beginning address of the peripheral registers
++ * @param  intr_mask Bit map of the interrupts needs to be disabled
++ *
++ * @return None
++ */
++static inline void uhci_ll_disable_intr(uhci_dev_t *hw, uint32_t intr_mask)
++{
++    hw->int_ena.val &= (~intr_mask);
++}
++
++/**
++ * @brief  Clear UHCI interrupt status
++ *
++ * @param  hw Beginning address of the peripheral registers
++ * @param  intr_mask Bit map of the interrupts needs to be cleared
++ *
++ * @return None
++ */
++static inline void uhci_ll_clear_intr(uhci_dev_t *hw, uint32_t intr_mask)
++{
++    hw->int_clr.val = intr_mask;
++}
++
++/**
++ * @brief  Get UHCI interrupt status
++ *
++ * @param  hw Beginning address of the peripheral registers
++ *
++ * @return Interrupt status
++ */
++static inline uint32_t uhci_ll_get_intr(uhci_dev_t *hw)
++{
++    return hw->int_st.val;
++}
++
++/**
++ * @brief  Set UHCI RX DMA descriptor address
++ *
++ * @param  hw Beginning address of the peripheral registers
++ * @param  addr DMA descriptor address
++ *
++ * @return None
++ */
++static inline void uhci_ll_set_rx_dma(uhci_dev_t *hw, uint32_t addr)
++{
++    hw->dma_in_link.addr = addr;
++}
++
++/**
++ * @brief  Set UHCI TX DMA descriptor address
++ *
++ * @param  hw Beginning address of the peripheral registers
++ * @param  addr DMA descriptor address
++ *
++ * @return None
++ */
++static inline void uhci_ll_set_tx_dma(uhci_dev_t *hw, uint32_t addr)
++{
++    hw->dma_out_link.addr = addr;
++}
++
++/**
++ * @brief  Start UHCI RX DMA
++ *
++ * @param  hw Beginning address of the peripheral registers
++ *
++ * @return None
++ */
++static inline void uhci_ll_rx_dma_start(uhci_dev_t *hw)
++{
++    hw->dma_in_link.start = 1;
++}
++
++/**
++ * @brief  Start UHCI TX DMA
++ *
++ * @param  hw Beginning address of the peripheral registers
++ *
++ * @return None
++ */
++static inline void uhci_ll_tx_dma_start(uhci_dev_t *hw)
++{
++    hw->dma_out_link.start = 1;
++}
++
++/**
++ * @brief  Stop UHCI RX DMA
++ *
++ * @param  hw Beginning address of the peripheral registers
++ *
++ * @return None
++ */
++static inline void uhci_ll_rx_dma_stop(uhci_dev_t *hw)
++{
++    hw->dma_in_link.stop = 1;
++}
++
++/**
++ * @brief  Stop UHCI TX DMA
++ *
++ * @param  hw Beginning address of the peripheral registers
++ *
++ * @return None
++ */
++static inline void uhci_ll_tx_dma_stop(uhci_dev_t *hw)
++{
++    hw->dma_out_link.stop = 1;
++}
++
++/**
++ * @brief  Configure the UHCI rx eof mode
++ *
++ * @param  hw Beginning address of the peripheral registers
++ * @param  eof_mode_mask The Ored mask of `uhci_rx_eof_mode_t`
++ *
++ * @return None
++ */
++static inline void uhci_ll_set_rx_eof_mode(uhci_dev_t *hw, uint32_t eof_mode_mask)
++{
++    typeof(hw->conf0)conf0_reg = hw->conf0;
++    conf0_reg.uart_rx_brk_eof_en = (eof_mode_mask & UHCI_RX_BREAK_EOF)>0;
++    conf0_reg.uart_idle_eof_en = (eof_mode_mask & UHCI_RX_IDLE_EOF)>0;
++    conf0_reg.len_eof_en = (eof_mode_mask & UHCI_RX_LEN_EOF)>0;
++    hw->conf0.val = conf0_reg.val;
++}
++
++/**
++ * @brief  Get the UHCI rx packet headr
++ *
++ * @param  hw Beginning address of the peripheral registers
++ *
++ * @return UHCI rx packet headr
++ */
++static inline uint32_t uhci_ll_get_rx_packet_head(uhci_dev_t *hw, uhci_pkt_head_t* head)
++{
++    return hw->rx_head;
++}
++
++/**
++ * @brief  Get the UHCI ack number
++ *
++ * @param  hw Beginning address of the peripheral registers
++ *
++ * @return UHCI ack number
++ */
++static inline uint32_t uhci_ll_get_ack_num(uhci_dev_t *hw)
++{
++    return hw->ack_num;
++}
++
++/**
++ * @brief  Enable UHCI sending short packet
++ *
++ * @param  hw Beginning address of the peripheral registers
++ * @param  pkt_idx The packet index of the packet needs to be send.
++ * @packet always_en Set true to enable continuously send the same short packet, else set it false
++ *
++ * @return None
++ */
++static inline void uhci_ll_short_pkt_start(uhci_dev_t *hw, int pkt_idx, bool always_en)
++{
++    if (always_en) {
++        hw->quick_sent.always_send_num = pkt_idx;
++        hw->quick_sent.always_send_en = 1;
++    } else {
++        hw->quick_sent.single_send_num = pkt_idx;
++        hw->quick_sent.single_send_en = 1;
++    }
++}
++
++/**
++ * @brief  Stop UHCI from sending short packet
++ *
++ * @param  hw Beginning address of the peripheral registers
++ *
++ * @return None
++ */
++static inline void uhci_ll_short_pkt_stop(uhci_dev_t *hw)
++{
++    hw->quick_sent.single_send_en = 0;
++    hw->quick_sent.always_send_en = 0;
++}
++
++/**
++ * @brief  Configure UHCI tx encoder.
++ *
++ * @param  hw Beginning address of the peripheral registers
++ * @param  tx_enc_cfg Pointer to tx encoder configuration structure.
++ *
++ * @return None
++ */
++static inline void uhci_ll_tx_encod_config(uhci_dev_t *hw, uhci_tx_enc_cfg_t *tx_enc_cfg)
++{
++    hw->conf0.encode_crc_en = tx_enc_cfg->crc_en;
++    hw->conf1.tx_check_sum_re = tx_enc_cfg->check_sum_rep_en;
++    hw->conf1.tx_ack_num_re = tx_enc_cfg->ack_num_re_en;
++}
++
++/**
++ * @brief  Configure UHCI rx decoder.
++ *
++ * @param  hw Beginning address of the peripheral registers
++ * @param  rx_dec_cfg Pointer to rx decoder configuration structure.
++ *
++ * @return None.
++ */
++static inline void uhci_ll_rx_decod_config(uhci_dev_t *hw, uhci_rx_dec_cfg_t *rx_dec_cfg)
++{
++    hw->conf1.check_sum_en = rx_dec_cfg->check_sum_en;
++    hw->conf1.check_seq_en = rx_dec_cfg->check_seq_en;
++    hw->conf1.crc_disable = (rx_dec_cfg->crc_en == 1);
++    hw->conf0.crc_rec_en = rx_dec_cfg->crc_en;
++}
++
++/**
++ * @brief  Configure UHCI to use separate char and header in the frame.
++ *
++ * @param  hw Beginning address of the peripheral registers
++ * @param  fram_cfg Ored mask of `uhci_frame_cfg_t`
++ *
++ * @return None.
++ */
++static inline void uhci_ll_fram_config(uhci_dev_t *hw, uhci_frame_cfg_t fram_cfg)
++{
++    hw->conf0.seper_en = (fram_cfg & UHCI_FRAME_SEPER_CHAR_EN) > 0;
++    hw->conf0.head_en = (fram_cfg & UHCI_FRAME_HEAD_EN) > 0;
++}
+diff --git a/components/hal/esp32s3/include/hal/uart_ll.h b/components/hal/esp32s3/include/hal/uart_ll.h
+index f437c502e09..6c3633186c9 100644
+--- a/components/hal/esp32s3/include/hal/uart_ll.h
++++ b/components/hal/esp32s3/include/hal/uart_ll.h
+@@ -1,16 +1,8 @@
+-// Copyright 2015-2020 Espressif Systems (Shanghai) PTE LTD
+-//
+-// Licensed under the Apache License, Version 2.0 (the "License");
+-// you may not use this file except in compliance with the License.
+-// You may obtain a copy of the License at
+-//
+-//     http://www.apache.org/licenses/LICENSE-2.0
+-//
+-// Unless required by applicable law or agreed to in writing, software
+-// distributed under the License is distributed on an "AS IS" BASIS,
+-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+-// See the License for the specific language governing permissions and
+-// limitations under the License.
++/*
++ * SPDX-FileCopyrightText: 2015-2021 Espressif Systems (Shanghai) CO LTD
++ *
++ * SPDX-License-Identifier: Apache-2.0
++ */
+ 
+ // The LL layer for UART register operations.
+ // Note that most of the register operations in this layer are non-atomic operations.
+@@ -408,7 +400,7 @@ FORCE_INLINE_ATTR void uart_ll_set_txfifo_empty_thr(uart_dev_t *hw, uint16_t emp
+  *         it will produce frame end signal for uhci to stop receiving data.
+  *
+  * @param  hw Beginning address of the peripheral registers.
+- * @param  rx_idle_thr The rx-idle threshold to be set.
++ * @param  rx_idle_thr The rx-idle threshold to be set(the time it takes to transfer one bit).
+  *
+  * @return None.
+  */
+diff --git a/components/hal/esp32s3/include/hal/uhci_ll.h b/components/hal/esp32s3/include/hal/uhci_ll.h
+index 0ea44408532..b4ca13c3860 100644
+--- a/components/hal/esp32s3/include/hal/uhci_ll.h
++++ b/components/hal/esp32s3/include/hal/uhci_ll.h
+@@ -1,38 +1,31 @@
+-// Copyright 2020 Espressif Systems (Shanghai) PTE LTD
+-//
+-// Licensed under the Apache License, Version 2.0 (the "License");
+-// you may not use this file except in compliance with the License.
+-// You may obtain a copy of the License at
+-//
+-//     http://www.apache.org/licenses/LICENSE-2.0
+-//
+-// Unless required by applicable law or agreed to in writing, software
+-// distributed under the License is distributed on an "AS IS" BASIS,
+-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+-// See the License for the specific language governing permissions and
+-// limitations under the License.
++/*
++ * SPDX-FileCopyrightText: 2020-2021 Espressif Systems (Shanghai) CO LTD
++ *
++ * SPDX-License-Identifier: Apache-2.0
++ */
+ 
+ // The LL layer for UHCI register operations.
+ // Note that most of the register operations in this layer are non-atomic operations.
+ 
+ 
+ #pragma once
+-#include <stdio.h>
+ #include "hal/uhci_types.h"
++#include "soc/uhci_periph.h"
+ #include "soc/uhci_struct.h"
+ 
+-#ifdef __cplusplus
+-extern "C" {
+-#endif
++#define UHCI_LL_GET_HW(num) (&UHCI0)
+ 
+-#define UHCI_LL_GET_HW(num) (((num) == 0) ? (&UHCI0) : (NULL))
++#define UHCI_INTR_MASK         (0x7fff) //All interrupt mask
++
++#define UHCI_RX_INTR  (GDMA_LL_EVENT_RX_DONE | GDMA_LL_EVENT_RX_SUC_EOF)
++#define UHCI_TX_INTR  (GDMA_LL_EVENT_TX_EOF | GDMA_LL_EVENT_TX_TOTAL_EOF)
+ 
+ typedef enum {
+-    UHCI_RX_BREAK_CHR_EOF = 0x1,
+-    UHCI_RX_IDLE_EOF      = 0x2,
+-    UHCI_RX_LEN_EOF       = 0x4,
+-    UHCI_RX_EOF_MAX       = 0x7,
+-} uhci_rxeof_cfg_t;
++    UHCI_INTR_IN_DONE         = (0x1 << 0),
++    UHCI_INTR_IN_SUC_EOF      = (0x1 << 1),
++    UHCI_INTR_OUT_DONE        = (0x1 << 3),
++    UHCI_INTR_OUT_TOT_EOF     = (0x1 << 8),
++} uhci_intr_t;
+ 
+ static inline void uhci_ll_init(uhci_dev_t *hw)
+ {
+@@ -48,14 +41,13 @@ static inline void uhci_ll_attach_uart_port(uhci_dev_t *hw, int uart_num)
+ {
+     hw->conf0.uart0_ce = (uart_num == 0)? 1: 0;
+     hw->conf0.uart1_ce = (uart_num == 1)? 1: 0;
+-    hw->conf0.uart2_ce = (uart_num == 2)? 1: 0;
+ }
+ 
+-static inline void uhci_ll_set_seper_chr(uhci_dev_t *hw, uhci_seper_chr_t *seper_char)
++static inline void uhci_ll_set_seper_chr(uhci_dev_t *hw, uhci_esc_chr_t *seper_char)
+ {
+     if (seper_char->sub_chr_en) {
+         typeof(hw->esc_conf0) esc_conf0_reg = hw->esc_conf0;
+-        esc_conf0_reg.seper_char = seper_char->seper_chr;
++        esc_conf0_reg.seper_char = seper_char->esc_chr;
+         esc_conf0_reg.seper_esc_char0 = seper_char->sub_chr1;
+         esc_conf0_reg.seper_esc_char1 = seper_char->sub_chr2;
+         hw->esc_conf0.val = esc_conf0_reg.val;
+@@ -67,13 +59,13 @@ static inline void uhci_ll_set_seper_chr(uhci_dev_t *hw, uhci_seper_chr_t *seper
+     }
+ }
+ 
+-static inline void uhci_ll_get_seper_chr(uhci_dev_t *hw, uhci_seper_chr_t *seper_chr)
++static inline void uhci_ll_get_seper_chr(uhci_dev_t *hw, uhci_esc_chr_t *seper_chr)
+ {
+     (void)hw;
+     (void)seper_chr;
+ }
+ 
+-static inline void uhci_ll_set_swflow_ctrl_sub_chr(uhci_dev_t *hw, uhci_swflow_ctrl_sub_chr_t *sub_ctr)
++static inline void uhci_ll_set_swflow_ctrl_sub_chr(uhci_dev_t *hw, uhci_swflow_esc_char_t *sub_ctr)
+ {
+     typeof(hw->escape_conf) escape_conf_reg = hw->escape_conf;
+     if (sub_ctr->flow_en == 1) {
+@@ -120,20 +112,31 @@ static inline uint32_t uhci_ll_get_intr(uhci_dev_t *hw)
+     return hw->int_st.val;
+ }
+ 
+-
+-static inline void uhci_ll_set_eof_mode(uhci_dev_t *hw, uint32_t eof_mode)
++/**
++ * @brief  Configure UHCI RX eof mode.
++ *
++ * @param  hw Beginning address of the peripheral registers
++ * @param  eof_mode The mode selected`
++ *
++ * @return None.
++ */
++static inline void uhci_ll_set_rx_eof_mode(uhci_dev_t *hw, uint32_t eof_mode)
+ {
+-    if (eof_mode & UHCI_RX_BREAK_CHR_EOF) {
+-        hw->conf0.uart_rx_brk_eof_en = 1;
+-    }
+-    if (eof_mode & UHCI_RX_IDLE_EOF) {
+-        hw->conf0.uart_idle_eof_en = 1;
+-    }
+-    if (eof_mode & UHCI_RX_LEN_EOF) {
+-        hw->conf0.len_eof_en = 1;
+-    }
++    hw->conf0.uart_rx_brk_eof_en = (eof_mode & UHCI_RX_BREAK_EOF) ? 1 : 0;
++    hw->conf0.uart_idle_eof_en = (eof_mode & UHCI_RX_IDLE_EOF) ? 1 : 0;
++    hw->conf0.len_eof_en = (eof_mode & UHCI_RX_LEN_EOF) ? 1 : 0;
+ }
+ 
+-#ifdef __cplusplus
++/**
++ * @brief  Configure UHCI to use separate char and header in the frame.
++ *
++ * @param  hw Beginning address of the peripheral registers
++ * @param  fram_cfg Ored mask of `uhci_frame_cfg_t`
++ *
++ * @return None.
++ */
++static inline void uhci_ll_fram_config(uhci_dev_t *hw, uhci_frame_cfg_t fram_cfg)
++{
++    hw->conf0.seper_en = (fram_cfg & UHCI_FRAME_SEPER_CHAR_EN) > 0;
++    hw->conf0.head_en = (fram_cfg & UHCI_FRAME_HEAD_EN) > 0;
+ }
+-#endif
+diff --git a/components/hal/include/hal/uart_hal.h b/components/hal/include/hal/uart_hal.h
+index f7b94888064..a13211c4e9b 100644
+--- a/components/hal/include/hal/uart_hal.h
++++ b/components/hal/include/hal/uart_hal.h
+@@ -1,16 +1,8 @@
+-// Copyright 2015-2019 Espressif Systems (Shanghai) PTE LTD
+-//
+-// Licensed under the Apache License, Version 2.0 (the "License");
+-// you may not use this file except in compliance with the License.
+-// You may obtain a copy of the License at
+-//
+-//     http://www.apache.org/licenses/LICENSE-2.0
+-//
+-// Unless required by applicable law or agreed to in writing, software
+-// distributed under the License is distributed on an "AS IS" BASIS,
+-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+-// See the License for the specific language governing permissions and
+-// limitations under the License.
++/*
++ * SPDX-FileCopyrightText: 2015-2021 Espressif Systems (Shanghai) CO LTD
++ *
++ * SPDX-License-Identifier: Apache-2.0
++ */
+ 
+ /*******************************************************************************
+  * NOTICE
+@@ -486,6 +478,18 @@ uint16_t uart_hal_get_max_rx_timeout_thrd(uart_hal_context_t *hal);
+  */
+ #define uart_hal_get_rxfifo_len(hal) uart_ll_get_rxfifo_len((hal)->dev)
+ 
++/**
++ * @brief  Set the UART rx-idle threshold value.
++ *         when receiver takes more time than rx_idle_thrhd to receive a byte data,
++ *         it will produce frame end signal for uhci to stop receiving data.
++ *
++ * @param  hal Context of the HAL layer.
++ * @param  rx_idle_thr The rx-idle threshold to be set.
++ *
++ * @return None.
++ */
++void uart_hal_set_rx_idle_thr(uart_hal_context_t *hal, uint32_t rx_idle_thr);
++
+ #ifdef __cplusplus
+ }
+ #endif
+diff --git a/components/hal/include/hal/uhci_hal.h b/components/hal/include/hal/uhci_hal.h
+new file mode 100644
+index 00000000000..a333befd3d9
+--- /dev/null
++++ b/components/hal/include/hal/uhci_hal.h
+@@ -0,0 +1,189 @@
++/*
++ * SPDX-FileCopyrightText: 2020-2021 Espressif Systems (Shanghai) CO LTD
++ *
++ * SPDX-License-Identifier: Apache-2.0
++ */
++
++/*******************************************************************************
++ * NOTICE
++ * The hal is not public api, don't use in application code.
++ * See readme.md in soc/include/hal/readme.md
++ ******************************************************************************/
++
++// The HAL layer for UHCI.
++// There is no parameter check in the hal layer, so the caller must ensure the correctness of the parameters.
++
++#pragma once
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++#include "hal/uhci_ll.h"
++#include "hal/uhci_types.h"
++#include "soc/soc_caps.h"
++
++/**
++ * Context that should be maintained by both the driver and the HAL
++ */
++typedef struct {
++    uhci_dev_t *dev;
++    uint32_t version;
++} uhci_hal_context_t;
++
++/**
++ * @brief  Init UHCI hardware instance.
++ *
++ * @param  hal Context of the HAL layer
++ * @param  uhci_num UHCI number
++ *
++ * @return None
++ */
++void uhci_hal_init(uhci_hal_context_t *hal, int uhci_num);
++
++/**
++ * @brief  Attach a UART port to UHCI
++ *
++ * @param  hal Context of the HAL layer
++ * @param  uart_num UART number
++ *
++ * @return None
++ */
++void uhci_hal_attach_uart_port(uhci_hal_context_t *hal, int uart_num);
++
++/**
++ * @brief  Reset UHCI in link operations.
++ *
++ * @param  hal Context of the HAL layer
++ *
++ * @return None
++ */
++void uhci_hal_dma_in_reset(uhci_hal_context_t *hal);
++
++/**
++ * @brief  Reset UHCI out link operations.
++ *
++ * @param  hal Context of the HAL layer
++ *
++ * @return None
++ */
++void uhci_hal_dma_out_reset(uhci_hal_context_t *hal);
++
++/**
++ * @brief  Stop UHCI RX DMA
++ *
++ * @param  hal Context of the HAL layer
++ *
++ * @return None
++ */
++void uhci_hal_rx_dma_stop(uhci_hal_context_t *hal);
++
++/**
++ * @brief  Stop UHCI TX DMA
++ *
++ * @param  hal Context of the HAL layer
++ *
++ * @return None
++ */
++void uhci_hal_tx_dma_stop(uhci_hal_context_t *hal);
++
++/**
++ * @brief  Configure the UHCI rx eof mode
++ *
++ * @param  hal Context of the HAL layer
++ * @param  eof_mode_mask The Ored mask of `uhci_rx_eof_mode_t`
++ *
++ * @return None
++ */
++void uhci_hal_set_rx_eof_mode(uhci_hal_context_t *hal, uint32_t eof_mode_mask);
++
++/**
++ * @brief  Configure UHCI to use separate char and header in the frame.
++ *
++ * @param  hal Context of the HAL layer
++ * @param  fram_cfg Ored mask of `uhci_frame_cfg_t`
++ *
++ * @return None
++ */
++void uhci_hal_frame_config(uhci_hal_context_t *hal, uhci_frame_cfg_t fram_cfg);
++
++/**
++ * @brief  Set UHCI RX DMA descriptor address
++ *
++ * @param  hal Context of the HAL layer
++ * @param  addr DMA descriptor address
++ *
++ * @return None
++ */
++void uhci_hal_set_rx_dma(uhci_hal_context_t *hal, uint32_t addr);
++
++/**
++ * @brief  Set UHCI TX DMA descriptor address
++ *
++ * @param  hal Context of the HAL layer
++ * @param  addr DMA descriptor address
++ *
++ * @return None
++ */
++void uhci_hal_set_tx_dma(uhci_hal_context_t *hal, uint32_t addr);
++
++/**
++ * @brief  Start UHCI RX DMA
++ *
++ * @param  hal Context of the HAL layer
++ *
++ * @return None
++ */
++void uhci_hal_rx_dma_start(uhci_hal_context_t *hal);
++
++/**
++ * @brief  Start UHCI TX DMA
++ *
++ * @param  hal Context of the HAL layer
++ *
++ * @return None
++ */
++void uhci_hal_tx_dma_start(uhci_hal_context_t *hal);
++
++/**
++ * @brief  Enable UHCI interrupt
++ *
++ * @param  hal Context of the HAL layer
++ * @param  intr_mask Bit map of the interrupts needs to be enabled
++ *
++ * @return None
++ */
++void uhci_hal_enable_intr(uhci_hal_context_t *hal, uint32_t mask);
++
++/**
++ * @brief  Disable UHCI interrupt
++ *
++ * @param  hal Context of the HAL layer
++ * @param  intr_mask Bit map of the interrupts needs to be disabled
++ *
++ * @return None
++ */
++void uhci_hal_disable_intr(uhci_hal_context_t *hal, uint32_t intr_mask);
++
++/**
++ * @brief  Clear UHCI interrupt status
++ *
++ * @param  hal Context of the HAL layer
++ * @param  intr_mask Bit map of the interrupts needs to be cleared
++ *
++ * @return None
++ */
++void uhci_hal_clear_intr(uhci_hal_context_t *hal, uint32_t intr_mask);
++
++/**
++ * @brief  Get UHCI interrupt status
++ *
++ * @param  hal Context of the HAL layer
++ *
++ * @return Interrupt status
++ */
++uint32_t uhci_hal_get_intr(uhci_hal_context_t *hal);
++
++#ifdef __cplusplus
++}
++#endif
+diff --git a/components/hal/include/hal/uhci_types.h b/components/hal/include/hal/uhci_types.h
+index 7122e2a41a9..43a9fe86b64 100644
+--- a/components/hal/include/hal/uhci_types.h
++++ b/components/hal/include/hal/uhci_types.h
+@@ -1,53 +1,93 @@
+-// Copyright 2015-2019 Espressif Systems (Shanghai) PTE LTD
+-//
+-// Licensed under the Apache License, Version 2.0 (the "License");
+-// you may not use this file except in compliance with the License.
+-// You may obtain a copy of the License at
+-
+-//     http://www.apache.org/licenses/LICENSE-2.0
+-//
+-// Unless required by applicable law or agreed to in writing, software
+-// distributed under the License is distributed on an "AS IS" BASIS,
+-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+-// See the License for the specific language governing permissions and
+-// limitations under the License.
+-
+-
+-
+-// Though the UHCI driver hasn't been published, some types are defined here
+-// for users to develop over the HAL. See example: controller_hci_uart_esp32c3
++/*
++ * SPDX-FileCopyrightText: 2020-2021 Espressif Systems (Shanghai) CO LTD
++ *
++ * SPDX-License-Identifier: Apache-2.0
++ */
+ 
+ #pragma once
+ 
++#ifdef __cplusplus
++extern "C" {
++#endif
++
+ #include <stdint.h>
+ #include <stdbool.h>
++#if !CONFIG_IDF_TARGET_ESP32
++#include "soc/uhci_caps.h"
++#endif
+ 
+-#ifdef __cplusplus
+-extern "C" {
++typedef enum {
++    UHCI_NUM_0,
++#if SOC_UHCI_NUM_MAX > 1
++    UHCI_NUM_1,
+ #endif
++    UHCI_NUM_MAX,
++} uhci_port_t;
+ 
+-/**
+- * @brief UHCI escape sequence
+- */
++//UHCI packet header defination
++typedef union {
++    struct {
++        uint32_t seq_num: 3;     /*!<sequence number*/
++        uint32_t ack_num: 3;     /*!<ack number*/
++        uint32_t crc_en:1;       /*!<data integrity check present*/
++        uint32_t reliable: 1;    /*!<reliable packet*/
++        uint32_t type: 4;        /*!<packet type*/
++        uint32_t length: 12;     /*!<payload length*/
++        uint32_t check_sum: 8;   /*!<packet header check sum*/
++    };
++    uint32_t val;
++} uhci_pkt_head_t;
++
++//TX encode config structure
+ typedef struct {
+-    uint8_t seper_chr;        /*!< escape sequence character */
+-    uint8_t sub_chr1;         /*!< escape sequence sub-character 1 */
+-    uint8_t sub_chr2;         /*!< escape sequence sub-character 2 */
+-    bool sub_chr_en;          /*!< enable use of sub-chaacter of escape sequence */
+-} uhci_seper_chr_t;
+-
+-/**
+- * @brief UHCI software flow control
+- */
++    uint32_t crc_en:          1,  /*!<Enable hardware append 2byte CRC at the end of the frame when `crc_en` bit in packet header is 1*/
++             check_sum_rep_en:1,  /*!<Enable transmiter to replace `check_sum` in packet header automatically*/
++             ack_num_re_en:   1,  /*!<Enable transmiter to replace `ack_num` in packet header automatically*/
++             reserve:        29;
++} uhci_tx_enc_cfg_t;
++
++//RX decode config structure
++typedef struct {
++    uint32_t check_sum_en: 1,   /*!<Enable receiver to check `check_sum` in packet header*/
++             check_seq_en: 1,   /*!<Enable receiver to check seq num in packet header*/
++             crc_en:       1,   /*!<Enable receiver's crc calculation when `crc_en` bit in packet header is 1*/
++             reserve:     29;
++} uhci_rx_dec_cfg_t;
++
++//UHCI frame config structure
++typedef enum {
++    UHCI_FRAME_NONE_HEAD     = 0,   /*!<Don't encode the data frame*/
++    UHCI_FRAME_HEAD_EN       = 0x1, /*!<Encode the data frame with a head*/
++    UHCI_FRAME_SEPER_CHAR_EN = 0x2, /*!<Separating data frames which separate char*/
++} uhci_frame_cfg_t;
++
++//UHCI RX EOF mode
++typedef enum {
++    UHCI_RX_BREAK_EOF = 0x1,    /*!<A break char means the end of the frame, will generate rx_eof interrupt*/
++    UHCI_RX_IDLE_EOF  = 0x2,    /*!<A time out means the end of the frame, will generate rx_eof interrupt*/
++    UHCI_RX_LEN_EOF   = 0x4,    /*!<When received length equals to `length` in in packet header, will generate rx_eof interrupt*/
++    UHCI_RX_EOF_MODE_MAX  = 0x7,
++} uhci_rx_eof_mode_t;
++
++//Whe the frame contains `esc_char`, the hardware wll replace it with sub_chr1,sub_chr2
++typedef struct {
++    uint8_t esc_chr;
++    uint8_t sub_chr1; /*!<sub char1 used to replace the char which equals to esc_chr*/
++    uint8_t sub_chr2; /*!<sub char2 used to replace the char which equals to esc_chr*/
++    bool sub_chr_en;          /*!< enable use of sub-character of escape sequence */
++} uhci_esc_chr_t;
++
++//Configuration of software flow control characters' substitution characters
++//xon_chr will be replaced with xon_sub1 xon_sub2,xoff_chr will be replaced with xoff_sub1 xoff_sub2.
+ typedef struct {
+-    uint8_t xon_chr;          /*!< character for XON */
+-    uint8_t xon_sub1;         /*!< sub-character 1 for XON */
+-    uint8_t xon_sub2;         /*!< sub-character 2 for XON */
+-    uint8_t xoff_chr;         /*!< character 2 for XOFF */
+-    uint8_t xoff_sub1;        /*!< sub-character 1 for XOFF */
+-    uint8_t xoff_sub2;        /*!< sub-character 2 for XOFF */
+-    uint8_t flow_en;          /*!< enable use of software flow control */
+-} uhci_swflow_ctrl_sub_chr_t;
++    uint8_t xon_chr;    /*!<Software flow control XON character*/
++    uint8_t xon_sub1;   /*!<XON substitution char1*/
++    uint8_t xon_sub2;   /*!<XON substitution char2*/
++    uint8_t xoff_chr;   /*!<Software flow control XOFF character*/
++    uint8_t xoff_sub1;  /*!<XOFF substitution char1*/
++    uint8_t xoff_sub2;  /*!<XOFF substitution char1*/
++    uint8_t flow_en;    /*!< enable use of software flow control */
++} uhci_swflow_esc_char_t;
+ 
+ #ifdef __cplusplus
+ }
+diff --git a/components/hal/uart_hal.c b/components/hal/uart_hal.c
+index 9fa9725768c..64adf9fc97a 100644
+--- a/components/hal/uart_hal.c
++++ b/components/hal/uart_hal.c
+@@ -1,16 +1,8 @@
+-// Copyright 2015-2019 Espressif Systems (Shanghai) PTE LTD
+-//
+-// Licensed under the Apache License, Version 2.0 (the "License");
+-// you may not use this file except in compliance with the License.
+-// You may obtain a copy of the License at
+-//
+-//     http://www.apache.org/licenses/LICENSE-2.0
+-//
+-// Unless required by applicable law or agreed to in writing, software
+-// distributed under the License is distributed on an "AS IS" BASIS,
+-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+-// See the License for the specific language governing permissions and
+-// limitations under the License.
++/*
++ * SPDX-FileCopyrightText: 2015-2021 Espressif Systems (Shanghai) CO LTD
++ *
++ * SPDX-License-Identifier: Apache-2.0
++ */
+ 
+ // The HAL layer for UART (common part)
+ #include "hal/uart_hal.h"
+@@ -135,6 +127,11 @@ void uart_hal_set_loop_back(uart_hal_context_t *hal, bool loop_back_en)
+     uart_ll_set_loop_back(hal->dev, loop_back_en);
+ }
+ 
++void uart_hal_set_rx_idle_thr(uart_hal_context_t *hal, uint32_t rx_idle_thr)
++{
++    uart_ll_set_rx_idle_thr(hal->dev, rx_idle_thr);
++}
++
+ void uart_hal_init(uart_hal_context_t *hal, int uart_num)
+ {
+     // Set default clock source
+diff --git a/components/hal/uhci_hal.c b/components/hal/uhci_hal.c
+new file mode 100644
+index 00000000000..76a634e77be
+--- /dev/null
++++ b/components/hal/uhci_hal.c
+@@ -0,0 +1,98 @@
++/*
++ * SPDX-FileCopyrightText: 2020-2021 Espressif Systems (Shanghai) CO LTD
++ *
++ * SPDX-License-Identifier: Apache-2.0
++ */
++
++// The HAL layer for UHCI (common part)
++#include "hal/uhci_hal.h"
++
++void uhci_hal_init(uhci_hal_context_t *hal, int uhci_num)
++{
++    hal->dev = UHCI_LL_GET_HW(uhci_num);
++    hal->version = hal->dev->date;
++    uhci_ll_init(hal->dev);
++}
++
++void uhci_hal_attach_uart_port(uhci_hal_context_t *hal, int uart_num)
++{
++    uhci_ll_attach_uart_port(hal->dev, uart_num);
++}
++
++void uhci_hal_set_rx_eof_mode(uhci_hal_context_t *hal, uint32_t eof_mode_mask)
++{
++    uhci_ll_set_rx_eof_mode(hal->dev, eof_mode_mask);
++}
++
++void uhci_hal_frame_config(uhci_hal_context_t *hal, uhci_frame_cfg_t fram_cfg)
++{
++    uhci_ll_fram_config(hal->dev, fram_cfg);
++}
++
++/**********************************************
++ * DMA PART
++ *********************************************/
++
++#if !SOC_GDMA_SUPPORTED
++
++void uhci_hal_dma_in_reset(uhci_hal_context_t *hal)
++{
++    uhci_ll_dma_in_reset(hal->dev);
++}
++
++void uhci_hal_dma_out_reset(uhci_hal_context_t *hal)
++{
++    uhci_ll_dma_out_reset(hal->dev);
++}
++
++void uhci_hal_rx_dma_stop(uhci_hal_context_t *hal)
++{
++    uhci_ll_rx_dma_stop(hal->dev);
++}
++
++void uhci_hal_tx_dma_stop(uhci_hal_context_t *hal)
++{
++    uhci_ll_tx_dma_stop(hal->dev);
++}
++
++void uhci_hal_set_rx_dma(uhci_hal_context_t *hal, uint32_t addr)
++{
++    uhci_ll_set_rx_dma(hal->dev, addr);
++}
++
++void uhci_hal_set_tx_dma(uhci_hal_context_t *hal, uint32_t addr)
++{
++    uhci_ll_set_tx_dma(hal->dev, addr);
++}
++
++void uhci_hal_rx_dma_start(uhci_hal_context_t *hal)
++{
++    uhci_ll_rx_dma_start(hal->dev);
++}
++
++void uhci_hal_tx_dma_start(uhci_hal_context_t *hal)
++{
++    uhci_ll_tx_dma_start(hal->dev);
++}
++
++void uhci_hal_enable_intr(uhci_hal_context_t *hal, uint32_t intr_mask)
++{
++    uhci_ll_enable_intr(hal->dev, intr_mask);
++}
++
++void uhci_hal_disable_intr(uhci_hal_context_t *hal, uint32_t intr_mask)
++{
++    uhci_ll_disable_intr(hal->dev, intr_mask);
++}
++
++void uhci_hal_clear_intr(uhci_hal_context_t *hal, uint32_t intr_mask)
++{
++    uhci_ll_clear_intr(hal->dev, intr_mask);
++}
++
++uint32_t uhci_hal_get_intr(uhci_hal_context_t *hal)
++{
++    return uhci_ll_get_intr(hal->dev);
++}
++
++#endif //SOC_GDMA_SUPPORTED
+diff --git a/components/soc/esp32c3/CMakeLists.txt b/components/soc/esp32c3/CMakeLists.txt
+index a59b5173c14..3e093ff241d 100644
+--- a/components/soc/esp32c3/CMakeLists.txt
++++ b/components/soc/esp32c3/CMakeLists.txt
+@@ -11,6 +11,7 @@ set(srcs
+     "i2s_periph.c"
+     "i2c_periph.c"
+     "uart_periph.c"
++    "uhci_periph.c"
+     "timer_periph.c")
+ 
+ add_prefix(srcs "${CMAKE_CURRENT_LIST_DIR}/" "${srcs}")
+diff --git a/components/soc/esp32c3/include/soc/uhci_caps.h b/components/soc/esp32c3/include/soc/uhci_caps.h
+new file mode 100644
+index 00000000000..7741be8490e
+--- /dev/null
++++ b/components/soc/esp32c3/include/soc/uhci_caps.h
+@@ -0,0 +1,18 @@
++/*
++ * SPDX-FileCopyrightText: 2020-2021 Espressif Systems (Shanghai) CO LTD
++ *
++ * SPDX-License-Identifier: Apache-2.0
++ */
++
++#pragma once
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++// ESP32 have 2 UHCI.
++#define SOC_UHCI_NUM_MAX           (1) /*!< UHCI number max */
++
++#ifdef __cplusplus
++}
++#endif
+diff --git a/components/soc/esp32c3/uhci_periph.c b/components/soc/esp32c3/uhci_periph.c
+new file mode 100644
+index 00000000000..1481d966dc5
+--- /dev/null
++++ b/components/soc/esp32c3/uhci_periph.c
+@@ -0,0 +1,17 @@
++/*
++ * SPDX-FileCopyrightText: 2015-2021 Espressif Systems (Shanghai) CO LTD
++ *
++ * SPDX-License-Identifier: Apache-2.0
++ */
++
++#include "soc/uhci_periph.h"
++
++/*
++ Bunch of constants for every UHCI peripheral: hw addr of registers and isr source
++*/
++const uhci_signal_conn_t uhci_periph_signal[UHCI_NUM_MAX] = {
++    {
++        .irq = ETS_DMA_CH0_INTR_SOURCE,
++        .module = PERIPH_UHCI0_MODULE,
++    },
++};
+diff --git a/components/soc/esp32s2/CMakeLists.txt b/components/soc/esp32s2/CMakeLists.txt
+index 218b4bdbb8f..21a337d88b4 100644
+--- a/components/soc/esp32s2/CMakeLists.txt
++++ b/components/soc/esp32s2/CMakeLists.txt
+@@ -17,6 +17,7 @@ set(srcs
+     "touch_sensor_periph.c"
+     "uart_periph.c"
+     "usb_periph.c"
++    "uhci_periph.c"
+     "usb_phy_periph.c")
+ 
+ add_prefix(srcs "${CMAKE_CURRENT_LIST_DIR}/" "${srcs}")
+diff --git a/components/soc/esp32s2/include/soc/uhci_caps.h b/components/soc/esp32s2/include/soc/uhci_caps.h
+new file mode 100644
+index 00000000000..10faa7f13ea
+--- /dev/null
++++ b/components/soc/esp32s2/include/soc/uhci_caps.h
+@@ -0,0 +1,18 @@
++/*
++ * SPDX-FileCopyrightText: 2020-2021 Espressif Systems (Shanghai) CO LTD
++ *
++ * SPDX-License-Identifier: Apache-2.0
++ */
++
++#pragma once
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++// ESP32 have 2 UHCI.
++#define SOC_UHCI_NUM_MAX           (2) /*!< UHCI number max */
++
++#ifdef __cplusplus
++}
++#endif
+diff --git a/components/soc/esp32s2/include/soc/uhci_struct.h b/components/soc/esp32s2/include/soc/uhci_struct.h
+index 63cc0741610..6a25bc890bb 100644
+--- a/components/soc/esp32s2/include/soc/uhci_struct.h
++++ b/components/soc/esp32s2/include/soc/uhci_struct.h
+@@ -1,16 +1,9 @@
+-// Copyright 2017-2018 Espressif Systems (Shanghai) PTE LTD
+-//
+-// Licensed under the Apache License, Version 2.0 (the "License");
+-// you may not use this file except in compliance with the License.
+-// You may obtain a copy of the License at
+-//
+-//     http://www.apache.org/licenses/LICENSE-2.0
+-//
+-// Unless required by applicable law or agreed to in writing, software
+-// distributed under the License is distributed on an "AS IS" BASIS,
+-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+-// See the License for the specific language governing permissions and
+-// limitations under the License.
++/*
++ * SPDX-FileCopyrightText: 2015-2021 Espressif Systems (Shanghai) CO LTD
++ *
++ * SPDX-License-Identifier: Apache-2.0
++ */
++
+ #ifndef _SOC_UHCI_STRUCT_H_
+ #define _SOC_UHCI_STRUCT_H_
+ #ifdef __cplusplus
+@@ -357,7 +350,6 @@ typedef volatile struct uhci_dev_s {
+     uint32_t date;                                         /**/
+ } uhci_dev_t;
+ extern uhci_dev_t UHCI0;
+-extern uhci_dev_t UHCI1;
+ #ifdef __cplusplus
+ }
+ #endif
+diff --git a/components/soc/esp32s2/uhci_periph.c b/components/soc/esp32s2/uhci_periph.c
+new file mode 100644
+index 00000000000..490fd00873f
+--- /dev/null
++++ b/components/soc/esp32s2/uhci_periph.c
+@@ -0,0 +1,21 @@
++/*
++ * SPDX-FileCopyrightText: 2015-2021 Espressif Systems (Shanghai) CO LTD
++ *
++ * SPDX-License-Identifier: Apache-2.0
++ */
++
++#include "soc/uhci_periph.h"
++
++/*
++ Bunch of constants for every UHCI peripheral: hw addr of registers and isr source
++*/
++const uhci_signal_conn_t uhci_periph_signal[UHCI_NUM_MAX] = {
++    {
++        .irq = ETS_UHCI0_INTR_SOURCE,
++        .module = PERIPH_UHCI0_MODULE,
++    },
++    {
++        .irq = ETS_UHCI1_INTR_SOURCE,
++        .module = PERIPH_UHCI1_MODULE,
++    },
++};
+diff --git a/components/soc/esp32s3/CMakeLists.txt b/components/soc/esp32s3/CMakeLists.txt
+index 53914f113ed..4ea9b3d9a92 100644
+--- a/components/soc/esp32s3/CMakeLists.txt
++++ b/components/soc/esp32s3/CMakeLists.txt
+@@ -20,6 +20,7 @@ set(srcs
+     "touch_sensor_periph.c"
+     "uart_periph.c"
+     "usb_periph.c"
++    "uhci_periph.c"
+     "usb_phy_periph.c")
+ 
+ add_prefix(srcs "${CMAKE_CURRENT_LIST_DIR}/" "${srcs}")
+diff --git a/components/soc/esp32s3/include/soc/uhci_caps.h b/components/soc/esp32s3/include/soc/uhci_caps.h
+new file mode 100644
+index 00000000000..7741be8490e
+--- /dev/null
++++ b/components/soc/esp32s3/include/soc/uhci_caps.h
+@@ -0,0 +1,18 @@
++/*
++ * SPDX-FileCopyrightText: 2020-2021 Espressif Systems (Shanghai) CO LTD
++ *
++ * SPDX-License-Identifier: Apache-2.0
++ */
++
++#pragma once
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++// ESP32 have 2 UHCI.
++#define SOC_UHCI_NUM_MAX           (1) /*!< UHCI number max */
++
++#ifdef __cplusplus
++}
++#endif
+diff --git a/components/soc/esp32s3/uhci_periph.c b/components/soc/esp32s3/uhci_periph.c
+new file mode 100644
+index 00000000000..e20399224cf
+--- /dev/null
++++ b/components/soc/esp32s3/uhci_periph.c
+@@ -0,0 +1,17 @@
++/*
++ * SPDX-FileCopyrightText: 2015-2021 Espressif Systems (Shanghai) CO LTD
++ *
++ * SPDX-License-Identifier: Apache-2.0
++ */
++
++#include "soc/uhci_periph.h"
++
++/*
++ Bunch of constants for every UHCI peripheral: hw addr of registers and isr source
++*/
++const uhci_signal_conn_t uhci_periph_signal[UHCI_NUM_MAX] = {
++    {
++        .irq = ETS_UHCI0_INTR_SOURCE,
++        .module = PERIPH_UHCI0_MODULE,
++    }
++};
+diff --git a/components/soc/include/soc/uhci_periph.h b/components/soc/include/soc/uhci_periph.h
+index f75807c8172..f2cb949e526 100644
+--- a/components/soc/include/soc/uhci_periph.h
++++ b/components/soc/include/soc/uhci_periph.h
+@@ -1,18 +1,18 @@
+-// Copyright 2019 Espressif Systems (Shanghai) PTE LTD
+-//
+-// Licensed under the Apache License, Version 2.0 (the "License");
+-// you may not use this file except in compliance with the License.
+-// You may obtain a copy of the License at
+-//     http://www.apache.org/licenses/LICENSE-2.0
+-//
+-// Unless required by applicable law or agreed to in writing, software
+-// distributed under the License is distributed on an "AS IS" BASIS,
+-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+-// See the License for the specific language governing permissions and
+-// limitations under the License.
+-
++/*
++ * SPDX-FileCopyrightText: 2019-2021 Espressif Systems (Shanghai) CO LTD
++ *
++ * SPDX-License-Identifier: Apache-2.0
++ */
+ #pragma once
+ 
+ #include "soc/uhci_reg.h"
+ #include "soc/uhci_struct.h"
+ #include "soc/periph_defs.h"
++#include "hal/uhci_types.h"
++
++typedef struct {
++    const uint8_t irq;
++    const periph_module_t module;
++} uhci_signal_conn_t;
++
++extern const uhci_signal_conn_t uhci_periph_signal[UHCI_NUM_MAX];
+diff --git a/examples/bluetooth/hci/controller_hci_uart_esp32c3/main/uhci_uart_demo.c b/examples/bluetooth/hci/controller_hci_uart_esp32c3/main/uhci_uart_demo.c
+index 37c117f508c..f0492a45a79 100644
+--- a/examples/bluetooth/hci/controller_hci_uart_esp32c3/main/uhci_uart_demo.c
++++ b/examples/bluetooth/hci/controller_hci_uart_esp32c3/main/uhci_uart_demo.c
+@@ -244,7 +244,7 @@ void uhci_uart_install(void)
+ 
+     // configure UHCI
+     uhci_ll_init(s_uhci_hw);
+-    uhci_ll_set_eof_mode(s_uhci_hw, UHCI_RX_LEN_EOF);
++    uhci_ll_set_rx_eof_mode(s_uhci_hw, UHCI_RX_LEN_EOF);
+     // disable software flow control
+     s_uhci_hw->escape_conf.val = 0;
+     uhci_ll_attach_uart_port(s_uhci_hw, 1);
+diff --git a/examples/peripherals/uart/uart_dma/CMakeLists.txt b/examples/peripherals/uart/uart_dma/CMakeLists.txt
+new file mode 100644
+index 00000000000..143d842e904
+--- /dev/null
++++ b/examples/peripherals/uart/uart_dma/CMakeLists.txt
+@@ -0,0 +1,6 @@
++# The following lines of boilerplate have to be in your project's CMakeLists
++# in this exact order for cmake to work correctly
++cmake_minimum_required(VERSION 3.5)
++
++include($ENV{IDF_PATH}/tools/cmake/project.cmake)
++project(uart_dma)
+diff --git a/examples/peripherals/uart/uart_dma/README.md b/examples/peripherals/uart/uart_dma/README.md
+new file mode 100644
+index 00000000000..a7288e91d68
+--- /dev/null
++++ b/examples/peripherals/uart/uart_dma/README.md
+@@ -0,0 +1,61 @@
++| Supported Targets | ESP32-S2 | ESP32-S3 | ESP32-C3 |
++| ----------------- | -------- | -------- | -------- |
++
++# UART DMA (UHCI) Example
++
++(See the README.md file in the upper level 'examples' directory for more information about examples.)
++
++This example shows you how the use the uart with dma, also named UHCI driver.
++
++
++## How to use example
++
++### Hardware Required
++
++The example can be used with any ESP32 development board connected to a computer with a USB cable.
++
++1. Any ESP development boart. Including ESP32, ESP32-S2, ESP32-C3.
++
++2. To connect UART to PC, another board such as ESP_Test Board or FT232 USB UART board is usually needed.
++
++3. Two USB cables, one for UART0 for flashing and monitoring, another for other UARTs for testing reading and writing data.
++
++### Configure the project
++
++```
++idf.py menuconfig
++```
++
++* Set serial port under Serial Flasher Options.
++
++### Build and Flash
++
++Build the project and flash it to the board, then run monitor tool to view serial output:
++
++```
++idf.py -p PORT flash monitor
++```
++or
++```
++idf.py -p PORT flash monitor
++```
++
++(To exit the serial monitor, type ``Ctrl-]``.)
++
++See the Getting Started Guide for full steps to configure and use ESP-IDF to build projects.
++
++## Example Output
++
++Sendind `00 01 02 03 04 05` will generate the following output:
++```
++...
++I (274) cpu_start: Starting scheduler.
++I (279) uhci-example: UART-DMA(UHCI) example start, tx io:[8], rx io:[9], baud rate:[115200]
++I (319) uhci-example: uhci write buffer done!
++I (4859) uhci-example: bytes correct, bingo~!
++I (4859) uhci-example: bytes correct, bingo~!
++I (4859) uhci-example: bytes correct, bingo~!
++I (4869) uhci-example: bytes correct, bingo~!
++I (4869) uhci-example: bytes correct, bingo~!
++I (4879) uhci-example: bytes correct, bingo~!
++```
+diff --git a/examples/peripherals/uart/uart_dma/main/CMakeLists.txt b/examples/peripherals/uart/uart_dma/main/CMakeLists.txt
+new file mode 100644
+index 00000000000..85ac6268b9c
+--- /dev/null
++++ b/examples/peripherals/uart/uart_dma/main/CMakeLists.txt
+@@ -0,0 +1,6 @@
++if(NOT IDF_TARGET STREQUAL "esp32")
++    idf_component_register(SRCS "uart_dma_main.c"
++    INCLUDE_DIRS ".")
++else()
++    message(FATAL_ERROR "UHCI not avaliable on ESP32")
++endif()
+diff --git a/examples/peripherals/uart/uart_dma/main/Kconfig.projbuild b/examples/peripherals/uart/uart_dma/main/Kconfig.projbuild
+new file mode 100644
+index 00000000000..bb787ace406
+--- /dev/null
++++ b/examples/peripherals/uart/uart_dma/main/Kconfig.projbuild
+@@ -0,0 +1,35 @@
++menu "Example Configuration"
++
++    config UART_TX_IO
++        int "UART TX GPIO Num"
++        default 8 if IDF_TARGET_ESP32C3
++        default 18 if IDF_TARGET_ESP32 || IDF_TARGET_ESP32S2 || IDF_TARGET_ESP32S3
++        help
++            GPIO number for UART TX line.
++
++    config UART_RX_IO
++        int "UART RX GPIO Num"
++        default 9 if IDF_TARGET_ESP32C3
++        default 19 if IDF_TARGET_ESP32 || IDF_TARGET_ESP32S2 || IDF_TARGET_ESP32S3
++        help
++            GPIO number for UART RX line.
++
++    config UART_PORT_NUM
++        int "UART port number"
++        default 1
++        help
++            The UART device attached to DMA.
++
++    config UART_UHCI_PORT_NUM
++        int "UHCI port number"
++        default 0
++        help
++            Port number for UHCI device.
++
++    config UART_BAUD_RATE
++        int "uart baud rate"
++        default 115200
++        help
++            Uart baud rate.
++
++endmenu
+diff --git a/examples/peripherals/uart/uart_dma/main/uart_dma_main.c b/examples/peripherals/uart/uart_dma/main/uart_dma_main.c
+new file mode 100644
+index 00000000000..bc5e18a4351
+--- /dev/null
++++ b/examples/peripherals/uart/uart_dma/main/uart_dma_main.c
+@@ -0,0 +1,123 @@
++/*
++ * SPDX-FileCopyrightText: 2021 Espressif Systems (Shanghai) CO LTD
++ *
++ * SPDX-License-Identifier: Apache-2.0
++ */
++/* UART DMA Example
++
++   This example code is in the Public Domain (or CC0 licensed, at your option.)
++
++   Unless required by applicable law or agreed to in writing, this
++   software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
++   CONDITIONS OF ANY KIND, either express or implied.
++*/
++#include <stdio.h>
++#include <string.h>
++#include "freertos/FreeRTOS.h"
++#include "freertos/task.h"
++#include "freertos/queue.h"
++#include "driver/uart.h"
++#include "driver/uhci.h"
++#include "esp_log.h"
++
++#define EX_UART_NUM CONFIG_UART_PORT_NUM    //UART number attached to DMA
++#define EX_UHCI_NUM CONFIG_UART_UHCI_PORT_NUM    //UHCI number
++#define UART_BAUD_RATE CONFIG_UART_BAUD_RATE
++#define UART_TX_IO CONFIG_UART_TX_IO
++#define UART_RX_IO CONFIG_UART_RX_IO
++
++static QueueHandle_t uhci_queue;  //UHCI event queue
++
++static const char *TAG = "uhci-example";
++
++
++static void build_data(uint8_t *buf, size_t size)
++{
++    static int test_cnt = 0;
++    for (int i = 0; i < size; i++) {
++        buf[i] = (test_cnt + i) & 0xff;
++    }
++}
++
++static void prase_data(uint8_t *buf, size_t size)
++{
++    static int test_cnt = 0;
++    for (int i = 0; i < size; i++) {
++        if( buf[i] != ((test_cnt) & 0xff)) {
++            ESP_LOGE(TAG, "Bytes check wrong. you are sending %x, but the real is %x\n", buf[i], test_cnt);
++            return;
++        } else {
++            ESP_LOGI(TAG, "bytes correct, bingo~!");
++        }
++        test_cnt++;
++    }
++}
++
++static void uhci_read(void *arg)
++{
++    uint8_t *pdata = malloc(1024 * 4);
++    uint8_t *prd = pdata;
++    size_t rx_size = 0;
++    uhci_event_t uhci_evt;
++    while(1) {
++        if (xQueueReceive(uhci_queue, (void * )&uhci_evt, (portTickType)1000)) {
++            if (uhci_evt.type & (UHCI_EVENT_EOF | UHCI_EVENT_DATA)) {
++                if (uhci_evt.len) {
++                    uhci_dma_read_bytes(EX_UHCI_NUM, prd, uhci_evt.len, (TickType_t)0);
++                    prd += uhci_evt.len;
++                    rx_size += uhci_evt.len;
++                }
++                if (uhci_evt.type & UHCI_EVENT_EOF) {
++                    prase_data(pdata, rx_size);
++                    prd = pdata;
++                    rx_size = 0;
++                }
++            }
++        }
++    }
++    vTaskDelete(NULL);
++}
++
++static void uhci_write(void *arg)
++{
++    uint8_t *pdata = malloc(1024 * 4);
++    int i = 256;
++    build_data(pdata, i);
++    uhci_dma_write_bytes(EX_UHCI_NUM, pdata, i, 1);
++    uart_wait_tx_idle_polling(UART_NUM_1);
++    vTaskDelay(10/portTICK_PERIOD_MS);
++    ESP_LOGI(TAG, "uhci write buffer done!");
++    vTaskDelete(NULL);
++}
++
++void app_main(void)
++{
++    uart_config_t uart_config = {
++        .baud_rate = UART_BAUD_RATE,
++        .data_bits = UART_DATA_8_BITS,
++        .parity = UART_PARITY_DISABLE,
++        .stop_bits = UART_STOP_BITS_1,
++        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
++        .source_clk = UART_SCLK_APB,
++    };
++
++    //UART paramater config
++    uart_param_config(EX_UART_NUM, &uart_config);
++    uart_set_pin(EX_UART_NUM, UART_TX_IO, UART_RX_IO, -1, -1);
++    //Idle timeout value to generate end of frame signal for RX DMA.
++    uart_set_rx_idle_thr(EX_UART_NUM, 20);
++    //Disable UART interrupt
++    uart_disable_intr_mask(EX_UART_NUM, ~0);
++
++    uhci_dma_config_t uhci_dma_cfg = UHCI_CONF_DEFAULT();
++    //UHCI driver install
++    uhci_driver_install(EX_UHCI_NUM, &uhci_dma_cfg, 1024 * 2, 20, &uhci_queue);
++
++    ESP_LOGI(TAG, "UART-DMA(UHCI) example start, tx io:[%d], rx io:[%d], baud rate:[%d]", UART_TX_IO, UART_RX_IO, UART_BAUD_RATE);
++    //set UHCI time eof mode
++    uhci_set_rx_eof_mode(EX_UHCI_NUM, UHCI_RX_IDLE_EOF);
++    //attach uart to DMA and start DMA.
++    uhci_attach_uart_port_and_start(EX_UHCI_NUM, EX_UART_NUM);
++    xTaskCreate(uhci_read, "uhci_read", 1024 * 4, NULL, 7, NULL);
++    xTaskCreate(uhci_write, "uhci_write", 1024 * 4, NULL, 7, NULL);
++}
+diff --git a/tools/ci/check_copyright_ignore.txt b/tools/ci/check_copyright_ignore.txt
+index 640d17c5919..4f99aac624e 100644
+--- a/tools/ci/check_copyright_ignore.txt
++++ b/tools/ci/check_copyright_ignore.txt
+@@ -1200,7 +1200,6 @@ components/hal/esp32c3/include/hal/spimem_flash_ll.h
+ components/hal/esp32c3/include/hal/systimer_ll.h
+ components/hal/esp32c3/include/hal/twai_ll.h
+ components/hal/esp32c3/include/hal/uart_ll.h
+-components/hal/esp32c3/include/hal/uhci_ll.h
+ components/hal/esp32c3/include/hal/usb_serial_jtag_ll.h
+ components/hal/esp32c3/rtc_cntl_hal.c
+ components/hal/esp32h2/adc_hal.c
+@@ -1304,8 +1303,6 @@ components/hal/esp32s3/include/hal/spi_ll.h
+ components/hal/esp32s3/include/hal/spimem_flash_ll.h
+ components/hal/esp32s3/include/hal/systimer_ll.h
+ components/hal/esp32s3/include/hal/twai_ll.h
+-components/hal/esp32s3/include/hal/uart_ll.h
+-components/hal/esp32s3/include/hal/uhci_ll.h
+ components/hal/esp32s3/include/hal/usb_ll.h
+ components/hal/esp32s3/include/hal/usb_serial_jtag_ll.h
+ components/hal/esp32s3/interrupt_descriptor_table.c
+@@ -1359,9 +1356,7 @@ components/hal/include/hal/systimer_types.h
+ components/hal/include/hal/touch_sensor_hal.h
+ components/hal/include/hal/twai_hal.h
+ components/hal/include/hal/twai_types.h
+-components/hal/include/hal/uart_hal.h
+ components/hal/include/hal/uart_types.h
+-components/hal/include/hal/uhci_types.h
+ components/hal/include/hal/usb_hal.h
+ components/hal/include/hal/usb_types_private.h
+ components/hal/include/hal/wdt_hal.h
+@@ -1394,7 +1389,6 @@ components/hal/test/test_mpu.c
+ components/hal/touch_sensor_hal.c
+ components/hal/twai_hal.c
+ components/hal/twai_hal_iram.c
+-components/hal/uart_hal.c
+ components/hal/uart_hal_iram.c
+ components/hal/usb_hal.c
+ components/heap/heap_caps_init.c
+@@ -2137,7 +2131,6 @@ components/soc/esp32s2/include/soc/uart_pins.h
+ components/soc/esp32s2/include/soc/uart_reg.h
+ components/soc/esp32s2/include/soc/uart_struct.h
+ components/soc/esp32s2/include/soc/uhci_reg.h
+-components/soc/esp32s2/include/soc/uhci_struct.h
+ components/soc/esp32s2/include/soc/usb_pins.h
+ components/soc/esp32s2/include/soc/usb_reg.h
+ components/soc/esp32s2/include/soc/usb_struct.h
+@@ -2310,7 +2303,6 @@ components/soc/include/soc/syscon_periph.h
+ components/soc/include/soc/touch_sensor_periph.h
+ components/soc/include/soc/twai_periph.h
+ components/soc/include/soc/uart_periph.h
+-components/soc/include/soc/uhci_periph.h
+ components/soc/include/soc/usb_periph.h
+ components/soc/lldesc.c
+ components/soc/soc_include_legacy_warn.c
+-- 
+GitLab
+

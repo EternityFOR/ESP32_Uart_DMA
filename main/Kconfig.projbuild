@@ -1,0 +1,35 @@
+menu "Example Configuration"
+
+    config UART_TX_IO
+        int "UART TX GPIO Num"
+        default 8 if IDF_TARGET_ESP32C3
+        default 18 if IDF_TARGET_ESP32 || IDF_TARGET_ESP32S2 || IDF_TARGET_ESP32S3
+        help
+            GPIO number for UART TX line.
+
+    config UART_RX_IO
+        int "UART RX GPIO Num"
+        default 9 if IDF_TARGET_ESP32C3
+        default 19 if IDF_TARGET_ESP32 || IDF_TARGET_ESP32S2 || IDF_TARGET_ESP32S3
+        help
+            GPIO number for UART RX line.
+
+    config UART_PORT_NUM
+        int "UART port number"
+        default 1
+        help
+            The UART device attached to DMA.
+
+    config UART_UHCI_PORT_NUM
+        int "UHCI port number"
+        default 0
+        help
+            Port number for UHCI device.
+
+    config UART_BAUD_RATE
+        int "uart baud rate"
+        default 115200
+        help
+            Uart baud rate.
+
+endmenu
